@@ -1,27 +1,49 @@
 #!/bin/bash
 # Dev Horcrux SessionStart Hook — detects missing horcruxes and morning plans
+# Scans activity.log for recent 7 days, checks for missing logs (not just yesterday)
 # Reads config from ~/.claude/dev-horcrux.conf
 
 CONF="$HOME/.claude/dev-horcrux.conf"
-if [ ! -f "$CONF" ]; then
-    CONF="$HOME/.claude/dev-journal.conf"
-    [ ! -f "$CONF" ] && exit 0
-fi
+[ ! -f "$CONF" ] && exit 0
 
 # shellcheck source=/dev/null
 source "$CONF"
 
-DIR="${DEV_HORCRUX_DIR:-$DEV_JOURNAL_DIR}"
+DIR="$DEV_HORCRUX_DIR"
 [ -z "$DIR" ] && exit 0
 
-LAST_DATE=$(cat ~/.claude/last-active-date 2>/dev/null)
 TODAY=$(date +%Y-%m-%d)
+ACTIVITY_LOG="$HOME/.claude/session-activity.log"
 MESSAGES=""
 
-# 1. Check if last active date has a horcrux (backfill detection)
-if [ -n "$LAST_DATE" ] && [ "$LAST_DATE" != "$TODAY" ]; then
-    if [ ! -f "$DIR/$LAST_DATE.md" ]; then
-        MESSAGES="[DEV-LOG BACKFILL] $LAST_DATE had active sessions but no horcrux was created. Please generate $DIR/$LAST_DATE.md and $DIR/insights/$LAST_DATE.md from last-session.md and project index."
+# 1. Scan activity.log for dates with activity but no log file (last 7 days)
+if [ -f "$ACTIVITY_LOG" ]; then
+    # Get unique dates from activity log (last 7 days only)
+    MISSING_DATES=""
+    CUTOFF=$(date -v-7d +%Y-%m-%d 2>/dev/null || date -d "7 days ago" +%Y-%m-%d 2>/dev/null)
+
+    # Extract unique dates from activity log, filter to recent 7 days and not today
+    ACTIVE_DATES=$(cut -d'T' -f1 "$ACTIVITY_LOG" | sort -u | while read -r d; do
+        [ -z "$d" ] && continue
+        [ "$d" = "$TODAY" ] && continue
+        # Only include dates >= cutoff
+        if [ "$d" \> "$CUTOFF" ] || [ "$d" = "$CUTOFF" ]; then
+            echo "$d"
+        fi
+    done)
+
+    for d in $ACTIVE_DATES; do
+        if [ ! -f "$DIR/$d.md" ]; then
+            if [ -z "$MISSING_DATES" ]; then
+                MISSING_DATES="$d"
+            else
+                MISSING_DATES="$MISSING_DATES, $d"
+            fi
+        fi
+    done
+
+    if [ -n "$MISSING_DATES" ]; then
+        MESSAGES="[DEV-LOG BACKFILL] Missing logs for: $MISSING_DATES. Please generate using: bash ~/.claude/skills/dev-horcrux/scripts/discover-sessions.sh <date> for each missing date, then write the log files."
     fi
 fi
 

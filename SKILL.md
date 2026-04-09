@@ -3,7 +3,7 @@ name: dev-horcrux
 description: Split your session's soul before it dies — auto-generate morning plans, evening session logs with git/token metrics, and quality-gated insights. Triggers on "开工/morning/收工/wrap up/写日志", SessionStart hook [DEV-LOG BACKFILL] or [MORNING PLAN], or weekly/monthly review requests.
 license: MIT
 metadata:
-  version: "1.1.0"
+  version: "1.2.0"
   author: xiaojie
 ---
 
@@ -104,11 +104,14 @@ Exploratory/creative content (reverse engineering, tool hacking, etc.) goes insi
 
 **Metrics block** (auto-collected BEFORE writing log):
 
-**Step 1 — Locate session JSONL**: Run `ls -t ~/.claude/projects/*/[0-9a-f]*.jsonl 2>/dev/null | head -1` to find the most recently modified session transcript. If the project hash directory is known (e.g., from cwd), narrow the glob.
+Run `bash {SKILL_DIR}/scripts/collect-metrics.sh YYYY-MM-DD`. This single command:
+1. Collects git stats (commits, files, lines) for the date
+2. Runs `discover-sessions.sh` to scan ALL JSONL session files for that date
+3. Aggregates tokens/cost across all sessions (not just the current one)
+4. Outputs a **Session Summary** markdown table ready to embed in the log
 
-**Step 2 — Collect metrics**: Run `bash {SKILL_DIR}/scripts/collect-metrics.sh YYYY-MM-DD <jsonl-path>` with the path from Step 1. If no JSONL found, run without the path arg — git stats will still be collected, tokens will show `(unavailable)`.
-
-**Do NOT skip this step. Do NOT write `(未采集)` without first attempting to locate the JSONL.**
+**Do NOT skip this step. Do NOT write `(未采集)` without first running the script.**
+**Do NOT manually write the Session Summary table — always use the script output.**
 ```yaml
 ## Metrics
 sessions: N
@@ -149,6 +152,25 @@ digraph insight_gate {
 - `confidence`: high / medium / low — low-confidence insights excluded from weekly review
 - No empty dimensions — only write sections with real content
 
+## Session Discovery (多 session 枚举)
+
+日志中的 Session 总览表**必须基于 discover-sessions.sh 输出**，不允许凭记忆编写。
+
+**当日写日志**: `collect-metrics.sh` 输出已包含 Session Summary 表，直接嵌入日志。
+
+**补写日志 (backfill)**:
+1. 运行 `bash {SKILL_DIR}/scripts/discover-sessions.sh YYYY-MM-DD`
+2. 输出包含每个 session 的 `first_user_msg` + `cwd` → 用于推断 session 主题
+3. 对于大型 session (>100 msgs)，可选择读取 JSONL 尾部获取更多上下文
+4. Session 总览表从脚本输出生成，补充主题描述由 Claude 基于 first_user_msg 推断
+5. 每个 session 的 `session_id` 可用于 `claude --resume <id>` 回溯
+
+**微型 session 处理**: <5 条消息的 session 已自动过滤。若需包含，传 `--min-msgs=0`。
+
+**时区**: JSONL 时间戳是 UTC，脚本自动转本地时间（默认 UTC+8）。可通过 `dev-horcrux.conf` 的 `TZ_OFFSET_CONF` 配置。
+
+**跨日 session**: 一个 JSONL 可能跨两天活跃（如 23:00 开始次日 02:00 结束），脚本会将其同时出现在两天的报告中。
+
 ## Weekly Review (manual trigger)
 
 When user asks for weekly review, or on Friday/weekend:
@@ -168,7 +190,9 @@ Dimensions:
 | Hook | Event | Purpose |
 |---|---|---|
 | `stop-hook.sh` | Stop | Record timestamp + cwd to activity log |
-| `session-start-hook.sh` | SessionStart | Detect missing logs, inject backfill prompt |
+| `session-start-hook.sh` | SessionStart | Scan last 7 days for missing logs, inject backfill prompt |
+| `discover-sessions.sh` | Manual | Scan all JSONL files for a date, output structured session list |
+| `collect-metrics.sh` | Manual | Git stats + discover-sessions aggregation + session summary table |
 
 Stop hook enhanced output (`~/.claude/session-activity.log`):
 ```
@@ -184,3 +208,6 @@ Stop hook enhanced output (`~/.claude/session-activity.log`):
 | Hardcoding paths | Always read from `~/.claude/dev-horcrux.conf` |
 | Forgetting plan review in evening log | Always diff plan vs actual, even if plan was empty |
 | Writing insights without source links | Every insight MUST link to a specific session |
+| Writing Session Summary from memory | Always use `collect-metrics.sh` / `discover-sessions.sh` output |
+| Only counting current session's tokens | `collect-metrics.sh` now aggregates ALL sessions for the day |
+| Missing multi-day backfill | Hook scans last 7 days, not just yesterday |

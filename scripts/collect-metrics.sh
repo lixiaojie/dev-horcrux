@@ -1,11 +1,11 @@
 #!/bin/bash
-# Dev Journal Metrics Collector
-# Collects git stats and token usage for the daily log
-# Usage: collect-metrics.sh [date] [session-jsonl-path]
-# Output: YAML-formatted metrics block to stdout
+# Dev Horcrux Metrics Collector
+# Collects git stats, token usage (via discover-sessions), and session summary for daily log
+# Usage: collect-metrics.sh [date]
+# Output: YAML-formatted metrics block + session summary table to stdout
 
 DATE=${1:-$(date +%Y-%m-%d)}
-SESSION_JSONL="$2"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 echo "## Metrics"
 
@@ -29,59 +29,95 @@ else
     echo "code_changes: not a git repo"
 fi
 
-# --- Token usage (from session JSONL) ---
-if [ -n "$SESSION_JSONL" ] && [ -f "$SESSION_JSONL" ]; then
-    ANALYSIS=$(python3 - "$SESSION_JSONL" << 'PYEOF'
-import json, sys
-from pathlib import Path
+# --- Session discovery (replaces single-JSONL parsing) ---
+DISCOVER="$SCRIPT_DIR/discover-sessions.sh"
+if [ -x "$DISCOVER" ]; then
+    DISCOVERY_OUTPUT=$("$DISCOVER" "$DATE" 2>/dev/null)
 
-fp = Path(sys.argv[1])
-input_t = output_t = cache_create = cache_read = messages = 0
+    # Extract totals from YAML output
+    SESSIONS=$(echo "$DISCOVERY_OUTPUT" | grep "^  sessions:" | head -1 | awk '{print $2}')
+    MESSAGES=$(echo "$DISCOVERY_OUTPUT" | grep "^  messages:" | head -1 | awk '{print $2}')
+    INPUT_T=$(echo "$DISCOVERY_OUTPUT" | grep "^    input:" | head -1 | awk '{print $2}' | tr -d ',')
+    OUTPUT_T=$(echo "$DISCOVERY_OUTPUT" | grep "^    output:" | head -1 | awk '{print $2}' | tr -d ',')
+    CACHE_READ=$(echo "$DISCOVERY_OUTPUT" | grep "^    cache_read:" | head -1 | awk '{print $2}' | tr -d ',')
+    TOTAL_T=$(echo "$DISCOVERY_OUTPUT" | grep "^    total:" | head -1 | awk '{print $2}' | tr -d ',')
+    COST=$(echo "$DISCOVERY_OUTPUT" | grep "^  estimated_cost:" | head -1 | awk '{print $2}')
 
-with open(fp) as f:
-    for line in f:
-        try:
-            data = json.loads(line)
-            if data.get('type') == 'assistant' and 'message' in data:
-                messages += 1
-                u = data['message'].get('usage', {})
-                input_t += u.get('input_tokens', 0)
-                output_t += u.get('output_tokens', 0)
-                cache_create += u.get('cache_creation_input_tokens', 0)
-                cache_read += u.get('cache_read_input_tokens', 0)
-        except Exception:
-            pass
+    echo "sessions: ${SESSIONS:-0}"
+    echo "conversation_rounds: ${MESSAGES:-0}"
+    echo "tokens:"
+    echo "  input: ${INPUT_T:-0}"
+    echo "  output: ${OUTPUT_T:-0}"
+    echo "  cache_read: ${CACHE_READ:-0}"
+    echo "  total: ${TOTAL_T:-0}"
+    echo "estimated_cost: ${COST:-\$0.00}"
 
-total_input = input_t + cache_create + cache_read
-total = total_input + output_t
-cost = total_input * 3 / 1_000_000 + output_t * 15 / 1_000_000
+    # --- Session summary table (markdown) ---
+    echo ""
+    echo "## Session Summary"
+    echo "| # | Time | Msgs | Project | First Message |"
+    echo "|---|------|------|---------|---------------|"
 
-print(f"conversation_rounds: {messages}")
-print(f"tokens:")
-print(f"  input: {input_t:,}")
-print(f"  output: {output_t:,}")
-print(f"  cache_read: {cache_read:,}")
-print(f"  total: {total:,}")
-print(f"estimated_cost: ${cost:.2f}")
-PYEOF
-    )
-    echo "$ANALYSIS"
+    # Parse session entries from YAML
+    echo "$DISCOVERY_OUTPUT" | python3 -c "
+import sys
+
+content = sys.stdin.read()
+# Extract session blocks
+sessions = []
+current = {}
+in_sessions = False
+
+for line in content.split('\n'):
+    if line.strip() == 'sessions:':
+        in_sessions = True
+        continue
+    if line.startswith('totals:'):
+        in_sessions = False
+        if current:
+            sessions.append(current)
+            current = {}
+        break
+    if not in_sessions:
+        continue
+
+    if line.startswith('  - id:'):
+        if current:
+            sessions.append(current)
+        current = {'id': line.split(':')[1].strip()}
+    elif line.startswith('    ') and ':' in line and not line.startswith('    tokens:'):
+        key, _, val = line.strip().partition(':')
+        current[key.strip()] = val.strip().strip('\"')
+
+for s in sessions:
+    sid = s.get('id', '?')
+    start = s.get('start', '?')
+    end = s.get('end', '?')
+    msgs = s.get('messages', '?')
+    proj = s.get('project', '?')
+    msg = s.get('first_user_msg', '')[:50]
+    if len(s.get('first_user_msg', '')) > 50:
+        msg += '...'
+    print(f'| {sid} | {start}~{end} | {msgs} | {proj} | {msg} |')
+" 2>/dev/null
 else
-    echo "conversation_rounds: (run /cost for details)"
-    echo "tokens: (session JSONL not provided)"
+    echo "sessions: (discover-sessions.sh not found)"
+    echo "conversation_rounds: (unavailable)"
+    echo "tokens: (unavailable)"
 fi
 
-# --- Activity log (session count + time range) ---
+# --- Activity log (supplementary) ---
 ACTIVITY_LOG="$HOME/.claude/session-activity.log"
 if [ -f "$ACTIVITY_LOG" ]; then
     TODAY_ENTRIES=$(grep "^$DATE" "$ACTIVITY_LOG" 2>/dev/null)
-    SESSION_COUNT=$(echo "$TODAY_ENTRIES" | grep -c "^$DATE" 2>/dev/null)
-    if [ "$SESSION_COUNT" -gt 0 ]; then
+    STOP_COUNT=$(echo "$TODAY_ENTRIES" | grep -c "^$DATE" 2>/dev/null)
+    if [ "$STOP_COUNT" -gt 0 ]; then
         FIRST=$(echo "$TODAY_ENTRIES" | head -1 | cut -d'|' -f1 | cut -dT -f2)
         LAST=$(echo "$TODAY_ENTRIES" | tail -1 | cut -d'|' -f1 | cut -dT -f2)
-        echo "activity:"
-        echo "  stop_events: $SESSION_COUNT"
-        echo "  first_active: $FIRST"
-        echo "  last_active: $LAST"
+        echo ""
+        echo "## Activity Log"
+        echo "stop_events: $STOP_COUNT"
+        echo "first_active: $FIRST"
+        echo "last_active: $LAST"
     fi
 fi
