@@ -76,15 +76,6 @@ Creates a structured log for all sessions of the day, including:
 
 结构化记录当天所有 session，自动采集 git 统计、token 消耗、费用，并与晨间计划对照回顾。
 
-### Multi-Session Discovery (v1.2) / 多 session 发现
-**New in v1.2**: `discover-sessions.sh` scans ALL JSONL session files for a given day, extracting per-session metadata:
-- Session ID (for `claude --resume`), project/cwd, time range, message count
-- Token breakdown (input/output/cache), estimated cost
-- First user message (for topic inference)
-- Automatic UTC → local time conversion, cross-day session handling, micro-session filtering
-
-v1.2 新增：`discover-sessions.sh` 扫描当天所有 JSONL session 文件，提取每个 session 的元数据。日志中的 Session 总览表由脚本自动生成，不再依赖 Claude 记忆——解决了并行多 session 时的遗漏问题。
-
 ### Quality-Gated Insights / 有质量门控的洞察提炼
 Not every day deserves insights. The quality gate ensures signal over noise:
 - **Threshold**: only generates when ≥2 sessions, or bugfix, or architecture decision
@@ -93,10 +84,15 @@ Not every day deserves insights. The quality gate ensures signal over noise:
 
 不是每天都值得提炼洞察。质量门控确保信噪比：设有阈值、强制关联来源、标注置信度。
 
-### Multi-Day Backfill (v1.2) / 多日补写
-**New in v1.2**: SessionStart hook scans activity.log for the last 7 days and detects ALL missing logs — not just yesterday. Multiple missed days are reported in a single prompt.
+### Persistent Scheduling / 持久调度 (v1.3)
+Set-and-forget cron jobs that auto-generate morning plans and evening logs daily. Uses Claude Code's durable `CronCreate` with a self-renewal trick: each cron recreates itself on every firing, resetting the 7-day expiry timer. No external scheduler needed.
 
-v1.2 新增：SessionStart hook 扫描最近 7 天活动记录，检测所有缺失日志——不只是昨天。
+一劳永逸的定时任务：每天自动生成晨间计划和晚间日志。利用 Claude Code 的 durable `CronCreate`，每次触发时自我续期，绕过 7 天过期限制。无需外部调度器。
+
+### Auto-Backfill / 自动复活
+Forgot to log? Closed terminal in a hurry? The SessionStart hook detects missing horcruxes and injects a backfill prompt.
+
+忘了写日志？急着关了终端？下次启动时 hook 自动检测并提示补写。
 
 ### Weekly Review / 周回顾
 Aggregates daily horcruxes into a weekly summary: output stats, time allocation, plan accuracy trend, recurring insight themes, and deferred item tracking.
@@ -124,6 +120,7 @@ Default output: `~/dev-log`. The setup script / 安装脚本会：
 | "收工" / "wrap up" / "写日志" | Split soul: session log + insights / 灵魂分裂：生成日志 + 洞察 |
 | "周回顾" / "weekly review" | Generate weekly summary / 生成周回顾 |
 | Close terminal / 直接关终端 | Auto-detected, resurrect on next start / 下次自动复活 |
+| "设置调度" / "setup schedule" | Install persistent cron jobs / 安装持久定时任务 |
 
 ## File Structure / 文件结构
 
@@ -133,39 +130,19 @@ dev-horcrux/
 ├── templates.md          # Output templates (plan/log/insights/weekly) / 模板
 ├── README.md             # This file / 本文件
 └── scripts/
-    ├── setup.sh          # One-click installation / 一键安装
-    ├── stop-hook.sh      # Stop hook (timestamp + cwd) / 活跃标记
-    ├── session-start-hook.sh  # Missing horcrux detection (7-day scan) / 缺失检测（7 天扫描）
-    ├── discover-sessions.sh   # Multi-session JSONL scanner (v1.2) / 全量 session 发现
-    └── collect-metrics.sh     # Git + token metrics + session table / 指标采集 + session 总览
+    ├── setup.sh               # One-click installation / 一键安装
+    ├── stop-hook.sh           # Stop hook (timestamp + cwd) / 活跃标记
+    ├── session-start-hook.sh  # Missing horcrux detection / 缺失检测
+    ├── discover-sessions.sh   # Scan all JSONL for a date / 多 session 枚举
+    └── collect-metrics.sh     # Git + token + session summary / 指标采集
 ```
 
 ## Requirements / 依赖
 
 - Claude Code (or compatible AI coding assistant)
 - `jq` (for hook installation / 安装 hook 用)
-- `python3` (for JSONL parsing, session discovery / 解析 session 数据)
+- `python3` (for token extraction from session JSONL / 解析 token 数据)
 - `git` (optional, for code change metrics / 可选，代码统计用)
-
-## Changelog
-
-### v1.2.0 (2026-04-09)
-- **Multi-session discovery**: new `discover-sessions.sh` scans all JSONL files for a date, outputs structured YAML with per-session metadata
-- **Metrics overhaul**: `collect-metrics.sh` now aggregates ALL sessions (not just one), outputs Session Summary markdown table
-- **7-day backfill**: `session-start-hook.sh` scans last 7 days of activity.log for missing logs (was: only yesterday)
-- **Session Summary table**: generated from script output, not Claude memory — eliminates session omission in parallel-session workflows
-- **UTC→local time**: JSONL timestamps (UTC) auto-converted to local time (configurable TZ offset)
-
-### v1.1.0 (2026-04-07)
-- Mandatory log structure (metrics, session table, plan review — never omitted)
-- Insight quality gate (≥2 sessions / bugfix / decision / discovery)
-- Obsidian vault backup in stop-hook
-- 14-day rolling window for global-projects-index
-
-### v1.0.0 (2026-04-03)
-- Initial release: morning plan, session log, insights, weekly review
-- Stop + SessionStart hooks
-- Token usage from session JSONL
 
 ## License
 
