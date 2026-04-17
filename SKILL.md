@@ -171,6 +171,35 @@ digraph insight_gate {
 
 **跨日 session**: 一个 JSONL 可能跨两天活跃（如 23:00 开始次日 02:00 结束），脚本会将其同时出现在两天的报告中。
 
+## Skill 提炼检查（收工时自动触发）
+
+在 insights 生成之后、更新 last-session.md 之前，执行 Skill 提炼检查。
+
+**触发条件**：当日 session 包含以下任一信号：
+- 同一类操作重复 3 次以上（如反复调试同一类问题、反复执行类似流程）
+- 用户说"以后都这样做"或类似固化意图
+- 完成了一个之前没有 skill 覆盖的复杂多步骤工作流
+- insights 中出现"流程改进"类条目
+
+**检查流程**：
+1. 回顾当日所有 session 的关键操作
+2. 对比现有 skill 列表（`ls ~/.claude/skills/*/SKILL.md`）
+3. 如果发现可提炼模式，**向用户提议**（不自动创建）：
+
+```
+Skill 提炼建议：今天的 [描述] 流程可以封装为 skill。
+- 输入：[什么触发]
+- 输出：[产出什么]
+- 步骤：[3-5步概要]
+要现在用 nuwa-skill 创建吗？
+```
+
+**规则**：
+- 只提议，不自动创建——保持用户控制权（区别于 Hermes 的全自动）
+- 每次收工最多提议 1 个 skill（避免疲劳）
+- 如果用户拒绝，不记录也不再提——尊重判断
+- 如果用户同意，调用 `nuwa-skill` 或 `skill-creator` 执行
+
 ## Weekly Review (manual trigger)
 
 When user asks for weekly review, or on Friday/weekend:
@@ -184,6 +213,42 @@ Dimensions:
 - Plan accuracy trend (planned vs actual completion rate)
 - Insight aggregation (recurring themes → promotion candidates)
 - Next week suggestions (from accumulated deferred items)
+- **Behavioral inference** (see below)
+
+### Behavioral Inference（行为推断）
+
+Weekly review 新增维度：从一周的 session 记录中推断行为模式变化，自动提议更新 `global-user.md`。
+
+**分析维度**：
+
+| 信号 | 推断 | 更新目标 |
+|------|------|---------|
+| 时间分配偏移 | "本周 70% 时间在 content-produce，上周是 MDK 开发" | `global-user.md` context |
+| 新工具/模式出现 | "开始频繁使用 Chrome DevTools MCP" | `global-user.md` knowledge |
+| 决策模式变化 | "本周 3 次选择了快速交付而非完美方案" | `global-workflow.md` 决策风格 |
+| Skill 使用频率 | "delphi 本周用了 5 次，advisory-board 0 次" | Skill 优先级调整 |
+
+**输出格式**（写入 weekly review 文件）：
+
+```markdown
+## 行为推断
+
+### 观察
+- [具体观察，附数据]
+
+### 建议更新
+- `global-user.md` line X: [当前内容] → [建议内容]
+- 理由: [为什么]
+
+### 不建议更新的观察
+- [看到了但可能只是本周偶发，不足以改配置]
+```
+
+**规则**：
+- 只在 weekly review 中做，不在 daily log 中做——避免过度拟合单日波动
+- 只提议更新，不自动修改配置文件——用户确认后手动或授权更新
+- 至少需要 3 天以上的数据才做推断——少于 3 天说"数据不足，跳过"
+- 推断必须有数据支撑（session 数、时间占比、操作频次），不能靠"感觉"
 
 ## Persistent Scheduling (CronCreate 自续期)
 

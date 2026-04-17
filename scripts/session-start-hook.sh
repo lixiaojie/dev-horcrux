@@ -56,6 +56,30 @@ if [ ! -f "$DIR/${TODAY}-plan.md" ]; then
     fi
 fi
 
+# 3. Auto-load project-relevant memories based on CWD
+CWD=$(pwd)
+PROJECT_NAME=$(basename "$CWD")
+MEMORY_DIR="$HOME/.claude/projects/-Users-admin-Documents-claude-project/memory"
+
+if [ -d "$MEMORY_DIR" ]; then
+    # Search for memories matching current project directory name
+    RELEVANT=$(grep -rli "$PROJECT_NAME" "$MEMORY_DIR"/*.md 2>/dev/null | grep -v "MEMORY.md" | head -3 || true)
+    if [ -n "$RELEVANT" ]; then
+        MEMORY_HINTS="[MEMORY CONTEXT] Relevant memories for $PROJECT_NAME:"
+        for f in $RELEVANT; do
+            BNAME=$(basename "$f" .md)
+            # Extract description from frontmatter
+            DESC=$(grep -A1 "^description:" "$f" 2>/dev/null | head -1 | sed 's/^description: //' || echo "")
+            MEMORY_HINTS="$MEMORY_HINTS\n- $BNAME: $DESC (read with: bash ~/.claude/hooks/memory-search.sh '$PROJECT_NAME')"
+        done
+        if [ -n "$MESSAGES" ]; then
+            MESSAGES="$MESSAGES\n$MEMORY_HINTS"
+        else
+            MESSAGES="$MEMORY_HINTS"
+        fi
+    fi
+fi
+
 # Output JSON if there are messages
 if [ -n "$MESSAGES" ]; then
     ESCAPED=$(echo -e "$MESSAGES" | python3 -c "import sys,json; print(json.dumps(sys.stdin.read().strip()))")
