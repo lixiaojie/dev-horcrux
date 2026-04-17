@@ -69,6 +69,7 @@ digraph dev_journal {
 **Housekeeping** (run once per morning, before generating plan):
 - Check `global-projects-index.md` Recent Sessions — move entries older than 14 days to Archived Sessions
 - Update Projects table `Last Active` if stale
+- Run `bash {SKILL_DIR}/scripts/config-health.sh --project-dir <cwd>` — if WARN/ALERT, surface one-liner in plan's "注意事项" section (details deferred to weekly review)
 
 **Data sources** (priority order — use ALL available, don't stop at first):
 1. Most recent `{DEV_HORCRUX_DIR}/YYYY-MM-DD.md` → 待跟进 section (most reliable, always up-to-date)
@@ -200,6 +201,85 @@ Skill 提炼建议：今天的 [描述] 流程可以封装为 skill。
 - 如果用户拒绝，不记录也不再提——尊重判断
 - 如果用户同意，调用 `nuwa-skill` 或 `skill-creator` 执行
 
+## Config Health Audit（配置健康度审计）
+
+定期检测 CLAUDE.md / global-*.md / MEMORY.md / SKILL.md 等基础文件是否膨胀，并提供渐进式披露（Progressive Disclosure）重构建议。
+
+**设计原则**：主文件保持索引角色，详细内容通过 `@path` 引用或独立文件承载。
+
+**脚本**：`bash {SKILL_DIR}/scripts/config-health.sh [--verbose] [--project-dir DIR]`
+
+**阈值**：
+
+| 文件类型 | WARN | ALERT | 说明 |
+|---------|------|-------|------|
+| `~/.claude/CLAUDE.md` | 15 | 25 | 纯 @path 索引，不应有实质内容 |
+| `global-*.md` | 80 | 120 | 单一职责模块 |
+| 项目 `CLAUDE.md` | 200 | 300 | 最大的配置单体，优先拆分目标 |
+| `MEMORY.md` | 150 | 200 | 系统在 200 行后截断 |
+| `SKILL.md` | 400 | 500 | skill-creator 标准 |
+
+**检测信号**：
+1. 行数超阈值
+2. 内联代码块/表格 > 30 行（提取候选）
+3. MEMORY.md 条目 > 150 字符（应精简为索引）
+
+**触发时机**：
+
+| 时机 | 深度 | 行动 |
+|------|------|------|
+| 晨间 Housekeeping | 轻量：仅跑脚本，有 WARN/ALERT 则一行提示 | 不展开分析 |
+| Weekly Review | 完整：脚本 + 语义分析 + 重构建议 | 输出 abstraction plan |
+
+### Weekly 深度分析（Claude 语义层）
+
+脚本只做机械检测。Weekly Review 时 Claude 额外做：
+
+1. **内容归属检查**：项目 CLAUDE.md 中是否有内容应该上移到 global-*.md 或下沉到子项目
+2. **重复检测**：跨文件出现的相同规则/说明
+3. **抽象建议**：超阈值文件的具体拆分方案
+
+**输出格式**（写入 weekly review 文件）：
+
+```markdown
+## 配置健康度
+
+### 脚本报告
+[粘贴 config-health.sh --verbose 输出]
+
+### 重构建议
+- `<文件>` (N 行): [具体建议]
+  - 提取 `<section>` → `<新文件路径>`，主文件用 @path 引用
+  - 理由: [为什么]
+
+### 无需操作
+- [扫描通过的文件/不紧急的观察]
+```
+
+**规则**：
+- 只提议，不自动修改——用户确认后执行
+- 建议必须具体到"哪段内容 → 提取到哪个文件"，不说"建议考虑拆分"
+- 对已经用 @path 组织良好的文件，即使行数接近阈值也不告警——结构健康比行数重要
+
+### Portability（首次运行 / 新用户引导）
+
+其他用户不一定有 `global-*.md` + `@path` 的模块化体系。首次运行 `config-health.sh` 发现 ALERT 时，Claude 应：
+
+1. **展示报告**，说明哪些文件膨胀
+2. **提议写入规则**到用户的 CLAUDE.md（全局或项目级），内容示例：
+
+```markdown
+## Config Hygiene
+- CLAUDE.md 保持索引角色，详细内容拆分到独立 .md 并用 @path 引用
+- SKILL.md 控制在 500 行以内，超出部分提取为 references/*.md
+- MEMORY.md 条目保持一行 < 150 字符，详细内容写独立文件
+```
+
+3. **等用户确认**后才写入——不静默修改任何配置文件
+4. 记录已引导状态到 `~/.claude/dev-horcrux.conf`（`CONFIG_HEALTH_ONBOARDED=true`），避免重复引导
+
+**检测逻辑**：读 `dev-horcrux.conf` 中的 `CONFIG_HEALTH_ONBOARDED`。未设置且首次发现 ALERT → 触发引导流程。
+
 ## Weekly Review (manual trigger)
 
 When user asks for weekly review, or on Friday/weekend:
@@ -213,6 +293,7 @@ Dimensions:
 - Plan accuracy trend (planned vs actual completion rate)
 - Insight aggregation (recurring themes → promotion candidates)
 - Next week suggestions (from accumulated deferred items)
+- **Config health audit** (see Config Health Audit section above)
 - **Behavioral inference** (see below)
 
 ### Behavioral Inference（行为推断）
@@ -252,72 +333,7 @@ Weekly review 新增维度：从一周的 session 记录中推断行为模式变
 
 ## Persistent Scheduling (CronCreate 自续期)
 
-可选：设置 durable cron，让 Claude Code 自动生成晨间计划和晚间日志。
-
-**原理**：`CronCreate(durable=true)` 持久化到 `.claude/scheduled_tasks.json`，重启存活。recurring 任务 7 天自动过期，所以每次执行时自我续期——删旧建新，重置 7 天倒计时。
-
-**前提**：Claude Code 每天会打开。没开的日子不触发（也不需要——没干活不用写日志）。
-
-### Setup
-
-在任意 Claude Code session 中执行一次：
-
-```
-帮我设置 dev-horcrux 持久调度：创建两个 durable cron（晨间计划 09:05 + 晚间日志 19:05），带自续期。
-```
-
-或手动创建：
-
-**Morning Plan Cron:**
-```
-CronCreate:
-  cron: "5 9 * * *"
-  recurring: true
-  durable: true
-  prompt: |
-    [DEV-HORCRUX MORNING CRON]
-    Use the dev-horcrux skill to generate today's morning plan.
-    After completing, self-renew: CronList → find cron with schedule "5 9 * * *" →
-    CronDelete → CronCreate with same config and this same prompt. This resets the 7-day expiry.
-```
-
-**Evening Log Cron:**
-```
-CronCreate:
-  cron: "5 19 * * *"
-  recurring: true
-  durable: true
-  prompt: |
-    [DEV-HORCRUX EVENING CRON]
-    Use the dev-horcrux skill to check if today's session log exists.
-    If not, generate it using collect-metrics.sh and discover-sessions.sh.
-    After completing, self-renew: CronList → find cron with schedule "5 19 * * *" →
-    CronDelete → CronCreate with same config and this same prompt. This resets the 7-day expiry.
-```
-
-### Self-renewal mechanism
-
-```dot
-digraph self_renewal {
-  rankdir=LR;
-  node [shape=box];
-  fire [label="Cron fires\n(daily)" shape=doublecircle];
-  task [label="Execute task\n(plan or log)"];
-  renew [label="CronList →\nCronDelete →\nCronCreate\n(reset 7d timer)"];
-  idle [label="Wait for\nnext day" shape=doublecircle];
-  fire -> task -> renew -> idle;
-}
-```
-
-- 每个 cron 独立续期，互不依赖
-- 第 7 天（最后一次触发）续期后创建新 cron，旧的自动清除
-- SessionStart hook 保留作为 fallback 安全网
-
-### Unscheduling
-
-```
-CronList → 找到所有 dev-horcrux cron → CronDelete 逐个删除
-```
+可选功能：设置 durable cron 自动触发晨间计划和晚间日志。详见 [references/scheduling.md](references/scheduling.md)。
 
 ## Hook Scripts
 
