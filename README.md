@@ -1,148 +1,245 @@
 # dev-horcrux
 
-Split your session's soul before it dies — auto-generate morning plans, evening session logs with git/token metrics, and quality-gated insights for Claude Code.
-
-在 session 死亡前分裂灵魂——为 Claude Code 自动生成晨间待办、带 git/token 指标的 session 日志、以及有质量门控的工作洞察。
+Split your session's soul before it dies — auto-generate morning plans, evening session logs with git/token metrics, quality-gated insights, and config health audits for Claude Code.
 
 > **Every session you close is a death. This skill teaches you to split your soul first.**
->
-> **每一次关闭终端都是一场死亡。这个 skill 教你在死前分裂灵魂。**
 
 ---
 
-## The Problem / 问题
+## Why / 为什么需要
 
 You spend hours in Claude Code every day. When you close the terminal, the code survives in git. Everything else dies:
 
-- **The decisions you made** — why you chose approach A over B — gone.
-- **The bugs you traced** — the 30-minute debugging path that found a one-line fix — gone.
-- **The patterns you noticed** — "this is the third time symbol normalization bit me" — gone.
-- **The cost you paid** — how many tokens, how much money, how much time — you have no idea.
-
-你每天在 Claude Code 里工作数小时。关闭终端后，代码活在 git 里。其他一切都死了：做过的决策、追踪过的 bug、发现的规律、花费的 token——全部灰飞烟灭。你甚至不知道上周二做了什么，不知道那个坑三天前已经踩过一次了。
+- **Decisions** — why you chose approach A over B — gone.
+- **Debugging paths** — the 30-minute trace that found a one-line fix — gone.
+- **Patterns** — "this is the third time symbol normalization bit me" — gone.
+- **Cost** — how many tokens, how much money — you have no idea.
 
 **Git remembers what you changed. Nothing remembers what you learned.**
 
-**Git 记住了你改了什么。但没有任何东西记住你学到了什么。**
+dev-horcrux fixes this. It creates persistent artifacts ("horcruxes") from every session — plans, logs, insights — so your knowledge survives terminal closure.
 
 ---
 
-## The Solution / 解法
-
-**dev-horcrux** splits your session's soul into persistent artifacts before it dies.
-
-Every day, automatically:
-
-| Artifact / 魂器 | What it captures / 封存了什么 |
-|---|---|
-| **Morning Plan** | Prioritized todos extracted from yesterday's unfinished business / 从昨天的未竟之事中提炼的分级待办 |
-| **Session Log** (The Horcrux) | Every session's goal, changes, results — with auto-collected git stats, token count, and cost / 每个 session 的完整记录 + 自动采集的 git 统计、token 消耗、费用 |
-| **Insights** (The Essence) | Distilled patterns, debugging lessons, architectural decisions — only on days with real substance / 提炼出的技术模式、排障经验、架构决策——只在有实质工作的日子生成 |
-
-**The safety net**: if you close the terminal without saving, the hook detects it and prompts you to resurrect yesterday's soul on the next session start.
-
-**安全网**：如果你直接关了终端，hook 会在下次启动时检测到，并提示你复活昨天的灵魂。
-
----
-
-## The Compound Effect / 复利
-
-**Day 1**: A structured log. Better than nothing.
-**Week 1**: A weekly review with plan accuracy trends. You discover 40% of your work was unplanned.
-**Month 1**: Patterns emerge — which projects eat the most tokens, which bugs keep recurring, which insights show up three times (time to automate them into a skill).
-
-**第 1 天**：一份结构化日志。
-**第 1 周**：一份周回顾，附带计划准确率。你发现 40% 的工作是计划外的。
-**第 1 个月**：规律浮现——哪些项目最烧 token，哪些 bug 反复出现，哪些洞察出现了三次（是时候把它封装成 skill 了）。
-
-**A horcrux isn't a note. It's a feedback loop. The more you create, the harder your knowledge is to kill.**
-
-**魂器不是笔记。它是一个反馈回路。你创造得越多，你的知识就越难被杀死。**
-
----
-
-## Features / 功能
-
-### Morning Plan / 晨间计划
-Auto-generates a prioritized daily plan (P0/P1/P2) from previous session's pending items, inbox, and project context. You start each day knowing exactly what matters.
-
-自动从昨天未完成事项 + 收件箱 + 项目上下文生成分级待办。每天一开工就知道什么最重要。
-
-### Session Log with Metrics / 带指标的 Session 日志
-Creates a structured log for all sessions of the day, including:
-- Per-session goal, changes, and verification results
-- **Auto-collected metrics**: git diff stats, token usage, estimated cost (from session JSONL)
-- **Plan review**: what was completed, deferred, or unplanned vs morning plan
-
-结构化记录当天所有 session，自动采集 git 统计、token 消耗、费用，并与晨间计划对照回顾。
-
-### Quality-Gated Insights / 有质量门控的洞察提炼
-Not every day deserves insights. The quality gate ensures signal over noise:
-- **Threshold**: only generates when ≥2 sessions, or bugfix, or architecture decision
-- **Source link**: every insight traces back to a specific session
-- **Confidence**: high / medium / low — low-confidence items excluded from weekly aggregation
-
-不是每天都值得提炼洞察。质量门控确保信噪比：设有阈值、强制关联来源、标注置信度。
-
-### Persistent Scheduling / 持久调度 (v1.3)
-Set-and-forget cron jobs that auto-generate morning plans and evening logs daily. Uses Claude Code's durable `CronCreate` with a self-renewal trick: each cron recreates itself on every firing, resetting the 7-day expiry timer. No external scheduler needed.
-
-一劳永逸的定时任务：每天自动生成晨间计划和晚间日志。利用 Claude Code 的 durable `CronCreate`，每次触发时自我续期，绕过 7 天过期限制。无需外部调度器。
-
-### Auto-Backfill / 自动复活
-Forgot to log? Closed terminal in a hurry? The SessionStart hook detects missing horcruxes and injects a backfill prompt.
-
-忘了写日志？急着关了终端？下次启动时 hook 自动检测并提示补写。
-
-### Weekly Review / 周回顾
-Aggregates daily horcruxes into a weekly summary: output stats, time allocation, plan accuracy trend, recurring insight themes, and deferred item tracking.
-
-将每日魂器聚合为周回顾：产出统计、时间分配、计划准确率、洞察主题聚合、积压追踪。
-
----
-
-## Setup / 安装
+## Quick Start / 快速上手
 
 ```bash
-bash ~/.claude/skills/dev-horcrux/scripts/setup.sh [output-directory]
+# 1. Install (one-time)
+bash ~/.claude/skills/dev-horcrux/scripts/setup.sh ~/dev-log
+
+# 2. Start your day
+> 开工
+# → Generates a prioritized morning plan (P0/P1/P2)
+
+# 3. End your day
+> 收工
+# → Generates session log + metrics + insights
+
+# 4. (Optional) Set up auto-scheduling
+> 帮我设置 dev-horcrux 持久调度
+# → Morning plan at 09:05, evening log at 19:05, auto-renewing
 ```
 
-Default output: `~/dev-log`. The setup script / 安装脚本会：
-1. Create output directories / 创建输出目录 (`dev-log/`, `insights/`, `weekly/`)
-2. Write config / 写入配置 (`~/.claude/dev-horcrux.conf`)
-3. Install hooks / 安装 hooks (`Stop` + `SessionStart` → `~/.claude/ft-settings.json`)
+That's it. If you forget to say "收工", the hook detects it and prompts you next morning.
 
-## Usage / 使用
+---
 
-| Trigger / 触发 | Action / 动作 |
-|---|---|
-| "开工" / "morning" | Generate today's plan / 生成今日待办 |
-| "收工" / "wrap up" / "写日志" | Split soul: session log + insights / 灵魂分裂：生成日志 + 洞察 |
-| "周回顾" / "weekly review" | Generate weekly summary / 生成周回顾 |
-| Close terminal / 直接关终端 | Auto-detected, resurrect on next start / 下次自动复活 |
-| "设置调度" / "setup schedule" | Install persistent cron jobs / 安装持久定时任务 |
+## What It Creates / 每天生成什么
 
-## File Structure / 文件结构
+### Morning Plan
+
+Trigger: first session of the day, or "开工" / "morning"
+
+```markdown
+# 2026-04-17 Daily Plan
+
+## Housekeeping
+- [x] global-projects-index: 清理 14 天前条目
+- [ ] Config health: dev-horcrux SKILL.md 456 行 (WARN)
+
+## P0 — 必须完成
+- [ ] stock_report HK 日报修复 Futu fallback
+- [ ] MDK v0.5.0 tag 发布
+
+## P1 — 争取完成
+- [ ] PAK allocation module 测试补全
+- [ ] SAK delphi 框架升级
+
+## 注意事项
+- MDK worktree mdk-v05-backfill 仍存活，合并后清理
+```
+
+**Data sources**: previous day's dev-log → last-session.md → activity.log → inbox → project MEMORY.md files. Staleness-aware — if last-session.md is >1 day old, it's deprioritized.
+
+### Session Log (The Horcrux)
+
+Trigger: "收工" / "wrap up" / "写日志"
+
+```markdown
+# 2026-04-17 Dev Log
+
+## Metrics
+sessions: 7
+tokens: {input: 1.2M, output: 380K, total: 1.58M}
+estimated_cost: $47.20
+code_changes:
+  files_modified: 12
+  lines_added: 486
+  lines_removed: 134
+  commits: 5
+
+## Session Overview
+| # | Time | Project | Summary |
+|---|------|---------|---------|
+| 1 | 09:12 | market-data-kit | MDK v0.5.0 backfill infra |
+| 2 | 10:45 | stock_report | HK daily report Futu fallback |
+| 3 | 13:20 | stock-analysis-kit | delphi cognitive framework |
+| ... | | | |
+
+## Session 2 — stock_report HK Futu fallback
+**Goal**: Fix Futu API timeout in HK daily report
+**Changes**: Added retry with exponential backoff, fallback to cached data
+**Verification**: `python stock_report.py --market HK` ran successfully
+
+## Plan Review
+- P0: 2/2 completed
+- P1: 1/2 completed (PAK deferred)
+- Unplanned: 2 items (config health audit, article update)
+
+## 待跟进
+- [ ] PAK allocation module 测试补全
+- [ ] dev-horcrux v1.6 push to GitHub
+```
+
+**Key**: metrics are auto-collected by `collect-metrics.sh` — not manually written. Session overview is generated by `discover-sessions.sh` scanning all JSONL files for the day.
+
+### Insights (Quality-Gated)
+
+Only generated on days with real substance (≥2 sessions, or bugfix, or architecture decision).
+
+```markdown
+# 2026-04-17 Insights
+
+## Insight 1: Config files need the same architecture discipline as code
+- **source**: Session 5, config health audit implementation
+- **confidence**: high
+- **category**: process
+- **detail**: SKILL.md hit 456 lines (WARN). Extracted 68-line scheduling section
+  to references/scheduling.md. Same progressive disclosure principle as code:
+  index file stays thin, details load on demand.
+- **action**: Weekly config health audit now built into dev-horcrux.
+```
+
+---
+
+## Features
+
+### Core (v1.0 ~ v1.2)
+
+| Feature | Description |
+|---------|-------------|
+| **Morning Plan** | Auto-prioritized P0/P1/P2 from yesterday's pending items + project context |
+| **Session Log** | Structured log with auto-collected git stats, token usage, cost |
+| **Insight Quality Gate** | Only generates insights when threshold is met (≥2 sessions, bugfix, decision) |
+| **Multi-Session Discovery** | Scans ALL JSONL files for a date — catches every session, not just the last one |
+| **Auto-Backfill** | SessionStart hook detects missing logs for the past 7 days, prompts to write them |
+| **Weekly Review** | Aggregates daily logs into weekly summary with plan accuracy trends |
+
+### Advanced (v1.3 ~ v1.6)
+
+| Feature | Version | Description |
+|---------|---------|-------------|
+| **Persistent Scheduling** | v1.3 | Durable cron with self-renewal — auto morning plans + evening logs, no external scheduler |
+| **Context Monitor** | v1.4 | PreToolUse hook warns at 65%/75% context usage, prevents surprise compression |
+| **Plan Session State** | v1.4 | Auto-saves plan progress on session end — next session resumes from exact checkpoint |
+| **On-Demand Memory Search** | v1.5 | Keyword search across memory files instead of loading everything at startup |
+| **Skill Extraction Check** | v1.5 | Detects repeated patterns at day-end, proposes new skills (ask, don't auto-create) |
+| **Behavioral Inference** | v1.5 | Weekly review analyzes behavior shifts (time allocation, tool usage) and proposes config updates |
+| **Config Health Audit** | v1.6 | Scans CLAUDE.md / SKILL.md / MEMORY.md for bloat, suggests progressive disclosure refactoring |
+| **Self-Optimization** | v1.6 | The skill eats its own dog food — detects and fixes its own file bloat |
+
+---
+
+## Config Health Audit (v1.6)
+
+Your CLAUDE.md, SKILL.md, and MEMORY.md files grow silently over time. Nobody tells you when to split them. dev-horcrux now does.
+
+```bash
+# Run manually anytime
+bash ~/.claude/skills/dev-horcrux/scripts/config-health.sh --verbose --project-dir .
+```
+
+```
+## Config Health Report
+2026-04-17 17:38
+
+### Global Config (~/.claude/)
+  OK     8    lines  CLAUDE.md (global index)
+  OK     57   lines  global-workflow.md
+
+### Project Config
+  OK     184  lines  claude_project/CLAUDE.md
+
+### Skill Files
+  WARN   456  lines  dev-horcrux/SKILL.md
+  ALERT  590  lines  docx/SKILL.md
+  ALERT  959  lines  openapi/SKILL.md
+
+### Summary
+  🔴 5 alert(s), 4 warning(s) — action needed
+```
+
+**Thresholds**:
+
+| File type | WARN | ALERT | Why |
+|-----------|------|-------|-----|
+| `~/.claude/CLAUDE.md` | 15 | 25 | Should be pure `@path` index |
+| `global-*.md` | 80 | 120 | Single-responsibility modules |
+| Project `CLAUDE.md` | 200 | 300 | Largest config monolith |
+| `MEMORY.md` | 150 | 200 | System truncates after 200 lines |
+| `SKILL.md` | 400 | 500 | skill-creator standard |
+
+Runs automatically during morning housekeeping (lightweight) and weekly review (full semantic analysis with refactoring suggestions).
+
+---
+
+## File Structure
 
 ```
 dev-horcrux/
-├── SKILL.md              # Main skill instructions / 主文档
-├── templates.md          # Output templates (plan/log/insights/weekly) / 模板
-├── README.md             # This file / 本文件
+├── SKILL.md                   # Core instructions (391 lines)
+├── templates.md               # Output templates (plan/log/insights/weekly)
+├── README.md
+├── references/
+│   └── scheduling.md          # CronCreate self-renewal (loaded on demand)
 └── scripts/
-    ├── setup.sh               # One-click installation / 一键安装
-    ├── stop-hook.sh           # Stop hook (timestamp + cwd) / 活跃标记
-    ├── session-start-hook.sh  # Missing horcrux detection / 缺失检测
-    ├── discover-sessions.sh   # Scan all JSONL for a date / 多 session 枚举
-    └── collect-metrics.sh     # Git + token + session summary / 指标采集
+    ├── setup.sh               # One-click installation
+    ├── stop-hook.sh           # Records timestamp + cwd on every Stop
+    ├── session-start-hook.sh  # Detects missing logs, injects backfill prompt
+    ├── discover-sessions.sh   # Scans all JSONL files for a date
+    ├── collect-metrics.sh     # Aggregates git + token + session summary
+    └── config-health.sh       # Config file health scanner
 ```
 
-## Requirements / 依赖
+## Requirements
 
-- Claude Code (or compatible AI coding assistant)
-- `jq` (for hook installation / 安装 hook 用)
-- `python3` (for token extraction from session JSONL / 解析 token 数据)
-- `git` (optional, for code change metrics / 可选，代码统计用)
+- Claude Code (or compatible AI coding assistant with hooks support)
+- `jq` (for hook installation)
+- `python3` (for token extraction from session JSONL)
+- `git` (optional, for code change metrics)
+- `bash` 3.2+ (macOS default works)
+
+## Version History
+
+| Version | Date | Key Changes |
+|---------|------|-------------|
+| v1.0 | 04-03 | Manual log → rules → hook auto-detection |
+| v1.1 | 04-07 | Mandatory template structure, insight quality gate, skill packaging |
+| v1.2 | 04-09 | Multi-session discovery, cross-session metrics, 7-day backfill |
+| v1.3 | 04-16 | Persistent scheduling with CronCreate self-renewal |
+| v1.4 | 04-17 | Context monitor hook + Plan Session State (inspired by GSD) |
+| v1.5 | 04-17 | On-demand memory search + Skill extraction + Behavioral inference (inspired by Hermes) |
+| v1.6 | 04-17 | Config health audit + progressive disclosure self-optimization |
 
 ## License
 
