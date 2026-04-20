@@ -3,7 +3,7 @@ name: dev-horcrux
 description: Split your session's soul before it dies — auto-generate morning plans, evening session logs with git/token metrics, and quality-gated insights. Triggers on "开工/morning/收工/wrap up/写日志", SessionStart hook [DEV-LOG BACKFILL] or [MORNING PLAN], or weekly/monthly review requests.
 license: MIT
 metadata:
-  version: "1.3.0"
+  version: "1.7.0"
   author: xiaojie
 ---
 
@@ -42,6 +42,7 @@ digraph dev_journal {
   gen_log [label="Generate session log\n+ metrics"];
   insights_check [label="Substantive work\ndone today?" shape=diamond];
   gen_insights [label="Generate insights"];
+  skill_check [label="Skill 提炼检查\n+ JSONL 持久化"];
   skip_insights [label="Skip insights\n(log one-liner)"];
   done [label="Update last-session.md\n+ global index" shape=doublecircle];
 
@@ -57,7 +58,8 @@ digraph dev_journal {
   gen_log -> insights_check;
   insights_check -> gen_insights [label="≥2 sessions\nor bugfix/decision"];
   insights_check -> skip_insights [label="light day"];
-  gen_insights -> done;
+  gen_insights -> skill_check;
+  skill_check -> done;
   skip_insights -> done;
 }
 ```
@@ -176,30 +178,92 @@ digraph insight_gate {
 
 在 insights 生成之后、更新 last-session.md 之前，执行 Skill 提炼检查。
 
-**触发条件**：当日 session 包含以下任一信号：
+### 信号检测
+
+**触发条件**（当日 session 包含以下任一信号）：
 - 同一类操作重复 3 次以上（如反复调试同一类问题、反复执行类似流程）
 - 用户说"以后都这样做"或类似固化意图
 - 完成了一个之前没有 skill 覆盖的复杂多步骤工作流
 - insights 中出现"流程改进"类条目
 
-**检查流程**：
+### 检查流程
+
 1. 回顾当日所有 session 的关键操作
 2. 对比现有 skill 列表（`ls ~/.claude/skills/*/SKILL.md`）
-3. 如果发现可提炼模式，**向用户提议**（不自动创建）：
+3. 如果发现可提炼模式：
+   a. 写入 insights 文件的"Skill 候选"维度（见 templates.md）
+   b. medium/high 置信度的候选追加到跨日追踪文件
+   c. 检查是否有跨日强化信号
+
+### JSONL 持久化（借鉴 Discovery Pipeline 信号机制）
+
+**文件**：`{DEV_HORCRUX_DIR}/insights/skill-candidates.jsonl`（单文件追加，非按日分文件）
+
+**记录格式**：
+```json
+{
+  "date": "2026-04-20",
+  "name": "视频合成流程",
+  "identifier": "skill:video-synthesis",
+  "signal_type": "repetition",
+  "source": "Session 2, EP01-EP03 视频生成",
+  "description": "Live Photo → 场景剪辑 → 配音 → 合成，3 集重复相同步骤",
+  "confidence": "medium",
+  "existing_skill": "video-from-photos (部分覆盖)",
+  "status": "pending"
+}
+```
+
+**字段说明**：
+- `identifier`：去重键，格式 `skill:<slug>`。同一 identifier 跨日出现 = 信号强化
+- `signal_type`：repetition / workflow / user_intent / process_improvement / cross_session
+- `confidence`：high / medium（low 不写入 JSONL，仅写入 insights 供浏览）
+- `existing_skill`：最接近的现有 skill，便于判断是新建还是增强
+- `status`：pending → proposed → created / dismissed
+
+**去重规则**：同一 identifier + 同一 date 只写一条（避免单日重复刷信号）。
+
+### 跨日强化检查
+
+写入 JSONL 后，扫描该文件中同一 identifier 的历史记录：
+
+| 出现天数 | 动作 |
+|---------|------|
+| 1 天 | 不额外提议（已写入 insights，等待累积） |
+| 2 天 | 在 insights 中标注"二次出现，观察中" |
+| ≥3 天 | 升级为强推荐，向用户提议 |
+
+**强推荐提议格式**（≥3 天信号累积时）：
+
+```
+Skill 强推荐（跨 N 天信号累积）：
+[名称] — [一句话描述]
+- 信号历史: [日期1] repetition, [日期2] workflow, [日期3] process_improvement
+- 输入: [触发条件]
+- 输出: [产出]
+- 步骤: [3-5 步概要]
+- 现有覆盖: [最近的 skill] — [差距]
+要用 skill-creator 创建吗？
+```
+
+**普通提议格式**（单日 high confidence，无跨日信号）：
 
 ```
 Skill 提炼建议：今天的 [描述] 流程可以封装为 skill。
-- 输入：[什么触发]
-- 输出：[产出什么]
-- 步骤：[3-5步概要]
-要现在用 nuwa-skill 创建吗？
+- 输入：[触发]
+- 输出：[产出]
+- 步骤：[3-5 步概要]
+要现在用 skill-creator 创建吗？
 ```
 
-**规则**：
-- 只提议，不自动创建——保持用户控制权（区别于 Hermes 的全自动）
-- 每次收工最多提议 1 个 skill（避免疲劳）
-- 如果用户拒绝，不记录也不再提——尊重判断
-- 如果用户同意，调用 `nuwa-skill` 或 `skill-creator` 执行
+### 规则
+
+- 只提议，不自动创建——保持用户控制权
+- 每次收工最多提议 1 个 skill（优先提议跨日强推荐，其次当日 high confidence）
+- 如果用户拒绝：更新 JSONL 中该 identifier 的 status 为 `dismissed`，后续不再提议
+- 如果用户同意：更新 status 为 `created`，调用 `skill-creator` 执行
+- JSONL 保留 90 天，超期自动忽略（不删文件，查询时过滤）
+- dismissed 的候选如果后续再次出现新信号（不同 date），重新激活为 pending
 
 ## Config Health Audit（配置健康度审计）
 
@@ -292,9 +356,24 @@ Dimensions:
 - Time allocation by project (from Stop hook activity log)
 - Plan accuracy trend (planned vs actual completion rate)
 - Insight aggregation (recurring themes → promotion candidates)
+- **Skill candidate aggregation** (from skill-candidates.jsonl — see Skill 提炼检查 section)
 - Next week suggestions (from accumulated deferred items)
 - **Config health audit** (see Config Health Audit section above)
 - **Behavioral inference** (see below)
+
+### Skill 候选聚合
+
+扫描 `{DEV_HORCRUX_DIR}/insights/skill-candidates.jsonl`，筛选本周（status=pending）条目，按 identifier 分组：
+
+| 判定 | 条件 | 动作 |
+|------|------|------|
+| 强推荐 | ≥3 天出现 | 输出完整 spec 草案，向用户提议创建 |
+| 观察 | 2 天出现，或 1 天 high confidence | 带入下周继续追踪 |
+| 放弃 | 1 天 + 非 high confidence | 标记 status=dismissed |
+
+输出表格写入 weekly review 文件（格式见 templates.md）。
+
+dismissed 的候选如果后续周再次出现新信号，重新激活为 pending（信号比人工判断优先）。
 
 ### Behavioral Inference（行为推断）
 

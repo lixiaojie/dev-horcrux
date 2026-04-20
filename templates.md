@@ -145,6 +145,21 @@ tags: [insights, ...]
 
 - source: Session N
 - confidence: medium
+
+## Skill 候选
+
+<!-- 仅当检测到可提炼信号时出现。medium/high 置信度的候选同时写入 insights/skill-candidates.jsonl 做跨日追踪。 -->
+<!-- low 置信度仅写入 insights 供浏览，不写入 JSONL。无信号时整个维度省略。 -->
+
+### [名称 — 简洁描述这个潜在 skill 做什么]
+
+- 信号类型: repetition | workflow | user_intent | process_improvement | cross_session
+- 来源: Session N, [具体上下文]
+- 输入 → 输出: [什么触发] → [产出什么]
+- 步骤概要: [3-5 步]
+- 置信度: high / medium / low
+- 现有覆盖: [最接近的现有 skill，或"无"]
+- 跨日状态: 首次发现 | 二次出现(观察中) | ≥3次(强推荐)
 ```
 
 Only include dimensions that have real content. Empty dimensions are omitted entirely.
@@ -193,6 +208,22 @@ tags: [weekly-review]
 
 ### 晋升候选（多次出现 + high confidence）
 - [insight] → 建议写入 global-memory / 封装 skill
+
+## Skill 候选聚合
+
+> 数据源：`{DEV_HORCRUX_DIR}/insights/skill-candidates.jsonl`，取本周条目（status=pending）。
+
+| 候选 | 出现天数 | 累计信号 | 最高置信度 | 信号类型分布 | 建议 |
+|------|---------|---------|-----------|------------|------|
+| [名称] | N/7 | N | high/med | repetition×2, workflow×1 | 强推荐 / 观察 / 放弃 |
+
+**判定规则**：
+- 3+ 天出现 → **强推荐**（类比 Discovery Pipeline 的 high_confidence）
+- 2 天出现 → **观察**，带入下周继续追踪
+- 1 天出现且置信度非 high → **放弃**（标记 status=dismissed）
+- 1 天出现但置信度 high → **观察**（强信号给一周观察期）
+
+**强推荐的候选**：直接向用户提议，附带完整的 skill spec 草案（输入/输出/步骤/触发词）。
 
 ## 遗留积压
 
