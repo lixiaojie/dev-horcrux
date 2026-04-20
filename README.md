@@ -157,6 +157,8 @@ Only generated on days with real substance (≥2 sessions, or bugfix, or archite
 | **Behavioral Inference** | v1.5 | Weekly review analyzes behavior shifts (time allocation, tool usage) and proposes config updates |
 | **Config Health Audit** | v1.6 | Scans CLAUDE.md / SKILL.md / MEMORY.md for bloat, suggests progressive disclosure refactoring |
 | **Self-Optimization** | v1.6 | The skill eats its own dog food — detects and fixes its own file bloat |
+| **Skill Candidate Persistence** | v1.7 | JSONL-based cross-day signal tracking for skill candidates — 1d=wait, 2d=observe, 3d+=strong recommend |
+| **Weekly Skill Aggregation** | v1.7 | Weekly review ranks accumulated skill candidates and proposes creation for high-confidence ones |
 
 ---
 
@@ -240,6 +242,7 @@ dev-horcrux/
 | v1.4 | 04-17 | Context monitor hook + Plan Session State (inspired by GSD) |
 | v1.5 | 04-17 | On-demand memory search + Skill extraction + Behavioral inference (inspired by Hermes) |
 | v1.6 | 04-17 | Config health audit + progressive disclosure self-optimization |
+| v1.7 | 04-20 | Skill candidate persistence — JSONL cross-day signal tracking + weekly aggregation (inspired by Discovery Pipeline) |
 
 ## License
 
