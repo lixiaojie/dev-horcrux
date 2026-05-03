@@ -88,6 +88,18 @@ Note: `[[]]` wikilinks only when `WIKILINKS=true` in config. Otherwise use plain
 
 ## Insights Template
 
+每个 insight 条目必须带 `kind:` 字段（5 类 MECE，v1.9.0+）：
+
+| kind | 含义 | 示例 section |
+|---|---|---|
+| `model` | 数据结构 / 实体关系 | 工具 / API 发现 里描述 schema 的 |
+| `decision` | 技术选型 + 理由 | 决策记录 |
+| `guideline` | recommend / avoid | 技术模式（正反面） |
+| `pitfall` | 已知陷阱 / 故障模式 | 排障经验 |
+| `process` | 流程 / 状态机 / 步骤 | 流程改进 |
+
+注：frontmatter 的 `type: daily-insights` 标识文件类型；每个 insight 条目内的 `kind:` 标识内容形态。两者不冲突。
+
 ```markdown
 ---
 date: YYYY-MM-DD
@@ -105,6 +117,7 @@ tags: [insights, ...]
 **模式**: ...
 **反模式**: ...
 
+- kind: guideline
 - source: Session N, [specific context]
 - confidence: high
 
@@ -115,6 +128,7 @@ tags: [insights, ...]
 
 **诊断方法**: ...
 
+- kind: pitfall
 - source: Session N, [bug ID or description]
 - confidence: high
 
@@ -123,6 +137,7 @@ tags: [insights, ...]
 ### [Title]
 [New tool behavior, API boundaries, limitations]
 
+- kind: model  # 或 decision，视条目内容
 - source: Session N
 - confidence: medium
 
@@ -133,6 +148,7 @@ tags: [insights, ...]
 
 **决策依据**: ...
 
+- kind: decision
 - source: Session N
 - confidence: high
 
@@ -143,6 +159,7 @@ tags: [insights, ...]
 
 **待封装**: ... (if applicable)
 
+- kind: process
 - source: Session N
 - confidence: medium
 

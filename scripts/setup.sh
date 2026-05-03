@@ -24,7 +24,7 @@ cat > "$CONF" << EOF
 # Dev Horcrux Configuration
 DEV_HORCRUX_DIR=$DEV_HORCRUX_DIR
 WIKILINKS=true
-SESSION_FILE=.assistant/runtime/last-session.md
+SESSION_FILE=.claude/runtime/last-session.md
 INDEX_FILE=~/.claude/global-projects-index.md
 EOF
 echo "[OK] Wrote config: $CONF"

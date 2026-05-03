@@ -3,7 +3,7 @@ name: dev-horcrux
 description: Split your session's soul before it dies — auto-generate morning plans, evening session logs with git/token metrics, and quality-gated insights. Triggers on "开工/morning/收工/wrap up/写日志", SessionStart hook [DEV-LOG BACKFILL] or [MORNING PLAN], or weekly/monthly review requests.
 license: MIT
 metadata:
-  version: "1.7.0"
+  version: "1.9.0"
   author: xiaojie
 ---
 
@@ -21,7 +21,7 @@ Config: `~/.claude/dev-horcrux.conf` (created by setup, editable):
 ```
 DEV_HORCRUX_DIR=/path/to/dev-log    # output directory
 WIKILINKS=true                       # Obsidian [[]] links (false for plain markdown)
-SESSION_FILE=.assistant/runtime/last-session.md
+SESSION_FILE=.claude/runtime/last-session.md
 INDEX_FILE=~/.claude/global-projects-index.md
 ```
 
@@ -43,6 +43,7 @@ digraph dev_journal {
   insights_check [label="Substantive work\ndone today?" shape=diamond];
   gen_insights [label="Generate insights"];
   skill_check [label="Skill 提炼检查\n+ JSONL 持久化"];
+  drift_check [label="Doc Drift Check\n(candidates.json → proposal)"];
   skip_insights [label="Skip insights\n(log one-liner)"];
   done [label="Update last-session.md\n+ global index" shape=doublecircle];
 
@@ -59,8 +60,9 @@ digraph dev_journal {
   insights_check -> gen_insights [label="≥2 sessions\nor bugfix/decision"];
   insights_check -> skip_insights [label="light day"];
   gen_insights -> skill_check;
-  skill_check -> done;
-  skip_insights -> done;
+  skill_check -> drift_check;
+  skip_insights -> drift_check;
+  drift_check -> done;
 }
 ```
 
@@ -82,6 +84,38 @@ digraph dev_journal {
 6. Project `MEMORY.md` files → tagged TODOs
 
 **Staleness check**: If `last-session.md` date is >1 day old, prefer dev-log files and activity.log as primary sources.
+
+### Carryover Staleness Check（v1.10.0+ — 欠账反向核查）
+
+**Problem**: 待跟进条目会从上一个 log 继承到今日 plan，但生成时不核对完成证据 → 已做的事被反复重列为欠账，每天 +1 天计数。真实案例：`anticrawl observation insight 归档` 在 `insights/2026-04-27/28/29.md` 三天都归档了，但 04-30 到 05-03 的 plan 仍然把它列为"欠账第 N 天"。
+
+**Rule**: 对每条从上游 log 继承过来的待跟进条目，在写入今日 plan 之前执行证据反向搜索：
+
+```
+for each carryover_item in previous_log.待跟进:
+    keywords = extract_keywords(carryover_item)  # 如 "anticrawl insight" / "新闻联播 spec"
+    evidence = search(keywords) in:
+      - {DEV_HORCRUX_DIR}/insights/*.md     # insight 归档
+      - ~/.claude/.../memory/*.md           # memory 条目
+      - docs/specs/*.md / docs/plans/*.md   # 设计/计划文档
+      - git log since carryover_date         # 代码实现
+    if evidence found:
+      mark "✅ 已完成（证据: <path:line>），本 plan 不再携带"
+      add correction note to previous log's 待跟进 section (strike-through + stale 修正批注)
+    else:
+      carry forward, +1 天计数
+```
+
+**When to apply**:
+- 每次生成 morning plan 时，对"老欠账"/"待跟进"section 的每条做一次
+- 不依赖关键词完美匹配——宁可过度核查（grep 多个同义词）也不要漏掉
+- 如果不确定是否已做，降级为"待用户确认"而不是盲目携带
+
+**Edge cases**:
+- 欠账条目太模糊（如"flow 优化"）→ 无法反查，直接带入但加 `[待澄清]` 标签
+- 部分完成（如 spec 起草了但未实施）→ 拆成两条，"spec ✅"和"实施 [ ]"
+
+**Why this matters**: 无核查的欠账继承机制 = 欠账通胀。用户看到的"连续 N 天未做"可能是系统 bug 而非执行问题，会误导优先级判断。
 
 **Output**: `{DEV_HORCRUX_DIR}/YYYY-MM-DD-plan.md` — see templates.md for format.
 
@@ -119,8 +153,19 @@ Run `bash {SKILL_DIR}/scripts/collect-metrics.sh YYYY-MM-DD`. This single comman
 ## Metrics
 sessions: N
 conversation_rounds: N        # from session JSONL
-tokens: {input: N, output: N, total: N}
-estimated_cost: $N.NN
+tokens: {input: N, output: N, cache_read: N, total: N}
+tokens_by_model:               # per-model breakdown (v1.8.0+)
+  claude-opus-4-7: {input: N, output: N, cache_read: N, cache_create: N}
+  claude-sonnet-4-6: {input: N, output: N, cache_read: N, cache_create: N}
+estimated_cost: $N.NN          # per-model pricing (Anthropic public list)
+estimated_cost_by_model:       # per-model cost breakdown (v1.8.0+)
+  claude-opus-4-7: $N.NN
+  claude-sonnet-4-6: $N.NN
+tool_calls:                    # top tools by frequency (v1.8.0+)
+  Bash: N
+  Read: N
+  Edit: N
+errors: N                      # isError events (v1.8.0+)
 code_changes:                  # from git diff --stat
   files_modified: N
   lines_added: N
@@ -153,7 +198,21 @@ digraph insight_gate {
 **Mandatory per insight:**
 - `source`: Link back to specific session (e.g., "Session 3, P0-2 fix")
 - `confidence`: high / medium / low — low-confidence insights excluded from weekly review
+- `kind`: v1.9.0+，5 类 MECE 之一（见下）
 - No empty dimensions — only write sections with real content
+
+**Insight `kind` 字段（v1.9.0+，5 类 MECE）：**
+
+| kind | 含义 |
+|---|---|
+| `model` | 数据结构 / 实体关系 |
+| `decision` | 技术选型 + 理由 |
+| `guideline` | recommend / avoid 类规则 |
+| `pitfall` | 已知陷阱 / 故障模式 |
+| `process` | 流程 / 状态机 / 步骤 |
+
+frontmatter 的 `type: daily-insights` 标识文件类型；条目内 `kind:` 标识内容形态，两者独立。
+旧 insights 不回填，新写的加即可。Weekly Review 时按 kind 聚合统计。
 
 ## Session Discovery (多 session 枚举)
 
@@ -264,6 +323,102 @@ Skill 提炼建议：今天的 [描述] 流程可以封装为 skill。
 - 如果用户同意：更新 status 为 `created`，调用 `skill-creator` 执行
 - JSONL 保留 90 天，超期自动忽略（不删文件，查询时过滤）
 - dismissed 的候选如果后续再次出现新信号（不同 date），重新激活为 pending
+
+## Doc Drift Check（文档漂移检查）
+
+收工时检测：今日代码/配置变更是否让某些文档（CLAUDE.md / MEMORY.md / README）过时。
+
+**触发时机**：收工 Step 3.5——Skill 提炼检查之后，last-session.md 更新之前。
+
+**脚本不调 LLM**：Claude 在收工会话里自己读 `candidates.json` 做语义对比，保持单一控制面。
+
+### 执行流程
+
+1. 运行 `python3 {SKILL_DIR}/scripts/doc-drift.py <date> --project-dir <cwd> --output <path>`
+2. Claude 读 candidates.json，对每个候选做语义对比：
+   - diff 里 symbol 改名/删除 → 目标文档段落是否还在用旧名？
+   - 新增 public 函数/类 → 目标文档 API 表是否缺失？
+   - 规则/配置变更 → CLAUDE.md 说明是否过期？
+3. 生成"文档漂移"section 写入当日 dev-log
+4. 等用户回复"全部应用 / 选择 1,3 / 跳过"
+
+### 候选 JSON 结构
+
+```json
+{
+  "date": "YYYY-MM-DD",
+  "diff_summary": {"files": N, "insertions": N, "deletions": N, "oversize": bool},
+  "candidates": [
+    {
+      "id": 1,
+      "rule_pattern": "*-kit/**/*.py",
+      "severity": "high|medium|low",
+      "changed_file": "path",
+      "changed_symbols": ["foo", "bar"],
+      "target_doc": "path/to/CLAUDE.md",
+      "check_hints": ["自然语言提示"],
+      "snippets": [{"heading": "## API", "line": N, "content": "...", "matched_symbols": [...]}]
+    }
+  ],
+  "total_candidates": N,
+  "truncated": bool
+}
+```
+
+### 成本控制（脚本层硬限）
+
+- 候选上限 10 条（超出按 severity 排序截断，标记 `truncated: true`）
+- Diff >500 行：只读 name-status，不提取 symbol（`oversize: true`）
+- JSON >100KB：压缩 snippets content（截至 200 字/段）
+
+### 输出到 dev-log 的模板
+
+```markdown
+## 文档漂移检查
+
+### 建议更新（N 项）
+1. `docs/foo.md:L42` — 代码把 `bar()` 改名 `baz()`，文档未同步
+   patch: - bar() → baz()
+2. `MEMORY.md:L15` — 条目提到的 `scripts/old.py` 今日已删除
+   建议：删除条目
+
+### 建议忽略
+- `xxx.md` 提到 `yyy` 但 diff 只是 comment 调整
+
+是否应用？回"全部应用"/"选择 1,3"/"跳过"。
+```
+
+**交互规则**（参考 `feedback_batch_delete_confirm`）：
+- 0 项：一行摘要 `文档漂移检查: 0 项`，不展开
+- >10 项：只展示前 5 条 + 总数，提议分批处理
+- 用户未回复：proposal 保留在 dev-log，不阻塞收工，下次可继续处理
+
+### 影响矩阵配置
+
+`{SKILL_DIR}/scripts/drift-rules.yaml`——glob pattern + check_hints，用户可热改，改后下次收工即生效。
+
+**规则格式**：
+```yaml
+rules:
+  - pattern: "*-kit/**/*.py"     # glob，支持 `**` 跨层
+    diff_filter: any              # any | new_file | new_key（v1 只认 any）
+    check_hints:
+      - "Kit CLAUDE.md 的 API 表是否反映新/改名/删除的 public 函数/类"
+    severity: medium              # high | medium | low
+```
+
+**Glob 语义**（shell 风格）：
+- `*` 单层（不跨 `/`）
+- `**` 跨任意层（含零层）
+- `?` 单字符
+- 其他走 fnmatch
+
+### 非目标
+
+- 不做自动 commit——proposal 必须用户确认
+- 不做 AST 级 symbol 提取——diff 文本 grep 近似覆盖 80%
+- 不检查 article/dev-log/insights（时间戳归档天然不漂移）
+- 不全量扫描——只针对今日 diff 触发
 
 ## Config Health Audit（配置健康度审计）
 
@@ -468,3 +623,35 @@ After generating session log, check if any plan was in-progress. If yes, update 
 | Writing Session Summary from memory | Always use `collect-metrics.sh` / `discover-sessions.sh` output |
 | Only counting current session's tokens | `collect-metrics.sh` now aggregates ALL sessions for the day |
 | Missing multi-day backfill | Hook scans last 7 days, not just yesterday |
+| Using flat Sonnet rate for all models | v1.8.0+: per-model pricing applied; Opus costs 5x more than Sonnet |
+| 凭记忆判断文档是否漂移 | v1.9.0+: 必须跑 `doc-drift.py`，不自评 |
+| 盲目继承上一个 log 的待跟进 | v1.10.0+: 每条 carryover 先反向搜 insights/memory/git log，找到证据就不再携带 |
+
+
+## Changelog
+
+### 1.10.0 — 2026-05-03
+- Add: **Carryover Staleness Check**——生成 morning plan 时，对每条从上一个 log 继承的待跟进条目做反向证据搜索（insights / memory / docs / git log），找到证据就不再携带并回写修正批注。
+- Fix: 真实案例"anticrawl observation insight 归档"从 04-30 到 05-03 连续 4 天被列为欠账 P1，实际 04-27/04-28/04-29 三天 insights 均已归档。无核查的欠账继承 = 欠账通胀。
+- Decision: 保持 LLM 语义核查 + 不硬编码关键词匹配。核查失败时降级为"[待澄清]"而非盲目携带。
+- Add: Common Mistakes 新增一条"盲目继承上一个 log 的待跟进"。
+
+### 1.9.0 — 2026-05-03
+- Add: **Doc Drift Check**——收工时检测今日 diff 可能波及的文档，产出 `candidates.json` 供 Claude 语义对比。
+- Add: `scripts/doc-drift.py` + `scripts/paragraph-snippet.py` + `scripts/drift-rules.yaml`（外置影响矩阵，用户可热改）。
+- Add: 自写 glob→regex 翻译（fnmatch 的 `*` 会跨 `/`，语义不符），16 case 全过。
+- Add: Insights 条目 `kind:` 字段（5 类 MECE: model/decision/guideline/pitfall/process），Weekly Review 可按 kind 聚合。
+- Fix: 真实跑 SAK 发现 `oversize` 阈值 500 太严（一天 6681 行触发），调到 1500。
+- Fix: `oversize=True` 时原逻辑直接 break 整个循环；改为仅跳过 symbol 提取，仍产出文件级候选。
+- Decision: 脚本不调 LLM API，语义对比在收工会话里由 Claude 做，保持单一控制面。
+- Decision: 拒绝"按命中频率自动升降 maturity"（基石悖论 + 坏规则悖论，见 `feedback_reference_frequency_paradox`）。
+- Decision: Memory 不引入 5 类 MECE——已有 origin-based 分类（user/feedback/project/reference）适用，再加是冗余第二维。仅给 Insights 加 kind。
+
+### 1.8.0 — 2026-04-23
+- Fix: per-model cost rates; 2026-04-22 cost jumped from $510 (Sonnet-only rate) to $2551 (actual Opus rate). Root cause: Anthropic public list prices differ 5x between models.
+- Add: `tokens_by_model` breakdown per session and in totals.
+- Add: `tool_calls` count per session and top-10 in totals.
+- Add: `errors` count per session (isError events).
+- Add: Session Summary table upgraded to 9 columns (Models, Top Tools, Err, Cost columns added).
+- Add: `pricing_source: anthropic-public-list` in totals block.
+- Note: Change 6 (pensieve DB cache) skipped — formula accuracy confirmed via direct comparison (penny-accurate on the 5 sessions pensieve assigns to 2026-04-22).

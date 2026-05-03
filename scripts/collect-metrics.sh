@@ -55,39 +55,117 @@ if [ -x "$DISCOVER" ]; then
     # --- Session summary table (markdown) ---
     echo ""
     echo "## Session Summary"
-    echo "| # | Time | Msgs | Project | First Message |"
-    echo "|---|------|------|---------|---------------|"
+    echo "| # | Time | Msgs | Project | Models | Top Tools | Err | Cost | First Message |"
+    echo "|---|------|------|---------|--------|-----------|-----|------|---------------|"
 
     # Parse session entries from YAML
     echo "$DISCOVERY_OUTPUT" | python3 -c "
 import sys
 
 content = sys.stdin.read()
-# Extract session blocks
+lines = content.split('\n')
+
 sessions = []
 current = {}
+model_tokens_block = {}
+tool_calls_block = {}
 in_sessions = False
+in_model_tokens = False
+in_tool_calls = False
+current_model = None
 
-for line in content.split('\n'):
+def flush_session():
+    global current, model_tokens_block, tool_calls_block, in_model_tokens, in_tool_calls, current_model
+    if current:
+        current['_model_tokens'] = dict(model_tokens_block)
+        current['_tool_calls'] = dict(tool_calls_block)
+        sessions.append(current)
+    current = {}
+    model_tokens_block = {}
+    tool_calls_block = {}
+    current_model = None
+    in_model_tokens = False
+    in_tool_calls = False
+
+for line in lines:
     if line.strip() == 'sessions:':
         in_sessions = True
         continue
     if line.startswith('totals:'):
+        flush_session()
         in_sessions = False
-        if current:
-            sessions.append(current)
-            current = {}
         break
     if not in_sessions:
         continue
 
+    # New session entry
     if line.startswith('  - id:'):
-        if current:
-            sessions.append(current)
+        flush_session()
         current = {'id': line.split(':')[1].strip()}
-    elif line.startswith('    ') and ':' in line and not line.startswith('    tokens:'):
-        key, _, val = line.strip().partition(':')
-        current[key.strip()] = val.strip().strip('\"')
+        continue
+
+    # 4-space level keys (session fields) — these reset sub-block state
+    if line.startswith('    ') and not line.startswith('      '):
+        key_part = line.strip()
+        if key_part == 'tokens_by_model:':
+            in_model_tokens = True
+            in_tool_calls = False
+            continue
+        if key_part == 'tool_calls:':
+            in_tool_calls = True
+            in_model_tokens = False
+            continue
+        # Any other 4-space key: reset sub-block state
+        in_model_tokens = False
+        in_tool_calls = False
+        current_model = None
+        if ':' in key_part:
+            key, _, val = key_part.partition(':')
+            k = key.strip()
+            if k not in ('tokens',):
+                current[k] = val.strip().strip('\"')
+        continue
+
+    # 6-space level (model name in tokens_by_model, or tool name in tool_calls)
+    if line.startswith('      ') and not line.startswith('        '):
+        stripped = line.strip()
+        if in_model_tokens:
+            if stripped.endswith(':'):
+                current_model = stripped[:-1]
+                if current_model not in model_tokens_block:
+                    model_tokens_block[current_model] = {}
+        elif in_tool_calls and ':' in stripped:
+            key, _, val = stripped.partition(':')
+            try:
+                tool_calls_block[key.strip()] = int(val.strip())
+            except ValueError:
+                pass
+        continue
+
+    # 8-space level (token fields under model)
+    if line.startswith('        ') and in_model_tokens and current_model and ':' in line:
+        stripped = line.strip()
+        key, _, val = stripped.partition(':')
+        try:
+            model_tokens_block[current_model][key.strip()] = int(val.strip().replace(',', ''))
+        except ValueError:
+            pass
+
+def abbrev_model(model):
+    model = model.strip()
+    if 'opus-4-7' in model: return 'opus-4-7'
+    if 'opus-4-6' in model: return 'opus-4-6'
+    if 'sonnet-4-6' in model: return 'sonnet'
+    if 'sonnet-4-5' in model: return 'sonnet-4-5'
+    if 'haiku' in model: return 'haiku'
+    if model == '<synthetic>': return ''
+    return model[:10]
+
+def abbrev_tool(name):
+    if 'chrome-devtools' in name:
+        parts = name.split('__')
+        return parts[-1][:12] if parts else name[:12]
+    return name[:12]
 
 for s in sessions:
     sid = s.get('id', '?')
@@ -95,10 +173,31 @@ for s in sessions:
     end = s.get('end', '?')
     msgs = s.get('messages', '?')
     proj = s.get('project', '?')
-    msg = s.get('first_user_msg', '')[:50]
-    if len(s.get('first_user_msg', '')) > 50:
-        msg += '...'
-    print(f'| {sid} | {start}~{end} | {msgs} | {proj} | {msg} |')
+    cost = s.get('estimated_cost', '')
+    errors_raw = s.get('errors', '')
+    errors = '' if not errors_raw or errors_raw == '0' else errors_raw
+
+    # Top 2 models by token share
+    mt = s.get('_model_tokens', {})
+    model_totals = {}
+    for m, tok in mt.items():
+        if m == '<synthetic>': continue
+        total = tok.get('input', 0) + tok.get('output', 0) + tok.get('cache_read', 0) + tok.get('cache_create', 0)
+        if total > 0:
+            model_totals[m] = total
+    top_models = sorted(model_totals.items(), key=lambda x: -x[1])[:2]
+    models_str = ' / '.join(abbrev_model(m) for m, _ in top_models) if top_models else '?'
+
+    # Top 3 tools by count
+    tc = s.get('_tool_calls', {})
+    top3 = sorted(tc.items(), key=lambda x: -x[1])[:3]
+    tools_str = ' '.join(f'{abbrev_tool(t)}({c})' for t, c in top3) if top3 else ''
+
+    msg_text = s.get('first_user_msg', '')[:40]
+    if len(s.get('first_user_msg', '')) > 40:
+        msg_text += '...'
+
+    print(f'| {sid} | {start}~{end} | {msgs} | {proj} | {models_str} | {tools_str} | {errors} | {cost} | {msg_text} |')
 " 2>/dev/null
 else
     echo "sessions: (discover-sessions.sh not found)"

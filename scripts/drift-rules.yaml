@@ -1,0 +1,95 @@
+# Doc Drift Check — 影响矩阵规则
+#
+# 语义：改了 `pattern` 匹配的文件，可能波及 `check_hints` 指向的文档。
+# 脚本按 pattern 匹配候选，Claude 在收工会话里读结果做语义对比。
+#
+# pattern: glob 语法（shell fnmatch，不是正则）
+# diff_filter: new_file | new_key | any（v1: 只做 any，后面按需扩展）
+# check_hints: 给 Claude 的自然语言提示——"检查 xxx 是否同步"
+# severity: high | medium | low（影响 proposal 排序）
+
+version: 1
+
+rules:
+  # === manifest / 接口契约 ===
+  - pattern: "*/manifest.yaml"
+    diff_filter: any
+    check_hints:
+      - "消费方项目 CLAUDE.md 里是否仍写着被改/删的接口"
+      - "上游 project 的 MEMORY.md 对应条目是否需要更新"
+    severity: high
+
+  # === Kit 层 ===
+  - pattern: "*-kit/**/schema/*.yaml"
+    diff_filter: any
+    check_hints:
+      - "Kit 的 CLAUDE.md schema 说明是否过期"
+      - "schema 索引文件是否遗漏新 schema"
+    severity: high
+
+  - pattern: "*-kit/**/*.py"
+    diff_filter: any
+    check_hints:
+      - "Kit CLAUDE.md 的 API 表是否反映新/改名/删除的 public 函数/类"
+    severity: medium
+
+  # === 项目脚本 ===
+  - pattern: "scripts/*.py"
+    diff_filter: new_file
+    check_hints:
+      - "项目 CLAUDE.md 的脚本/命令清单是否补充新脚本"
+    severity: medium
+
+  - pattern: "scripts/*.py"
+    diff_filter: any
+    check_hints:
+      - "MEMORY.md / CLAUDE.md 对旧脚本的引用是否还有效（改名/删除时）"
+    severity: high
+
+  # === 配置 ===
+  - pattern: "config/*.yaml"
+    diff_filter: new_key
+    check_hints:
+      - "项目 CLAUDE.md 的配置说明是否提及新键"
+    severity: medium
+
+  - pattern: "config/*.yaml"
+    diff_filter: any
+    check_hints:
+      - "环境变量/配置文档是否仍与实际 key 一致"
+    severity: low
+
+  # === LLM / 第三方集成 ===
+  - pattern: "llm/*.py"
+    diff_filter: any
+    check_hints:
+      - "项目 CLAUDE.md 的 LLM-Proxy 段是否过期（base_url / 模型 / API 类型）"
+    severity: high
+
+  # === Hooks / Harness ===
+  - pattern: ".claude/settings*.json"
+    diff_filter: any
+    check_hints:
+      - "~/.claude/CLAUDE.md 或项目 CLAUDE.md 里 hooks 相关段落是否同步"
+    severity: medium
+
+  - pattern: ".claude/hooks/*"
+    diff_filter: any
+    check_hints:
+      - "hooks 的用途/触发时机描述是否与实现一致"
+    severity: medium
+
+  # === Scheduler plugin 契约 ===
+  - pattern: "scheduler-core/plugins/*"
+    diff_filter: any
+    check_hints:
+      - "plugin consumer 的 CLAUDE.md 是否反映 plugin 接口变化"
+      - "scheduler-core 的插件注册表/文档是否同步"
+    severity: high
+
+  # === CLAUDE.md 自身删段落（反向检测） ===
+  - pattern: "**/CLAUDE.md"
+    diff_filter: any
+    check_hints:
+      - "被删段落提到的 symbol 是否在其他文档/记忆里还有引用（需 grep 验证）"
+    severity: medium
