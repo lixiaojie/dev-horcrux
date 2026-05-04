@@ -81,105 +81,25 @@ plan_review:
 
 ---
 
+## Insights
+
+- theme: wip-rollup | kind: pitfall | confidence: high
+  source: Session 3, subagent commit 范围溢出
+  subagent git add 卷入主 session 未提交的 WIP，commit +638 行超出任务范围
+
+- theme: cache-schema-sync | kind: guideline | confidence: high
+  source: Session 5, v2 字段缓存丢失
+  schema 新增字段必须同步更新反序列化，否则缓存层变隐式 downgrader
+
 > 关联记录: [[project-index]] | [[project-a]]
 ```
 
 Note: `[[]]` wikilinks only when `WIKILINKS=true` in config. Otherwise use plain text.
 
-## Insights Template
-
-每个 insight 条目必须带 `kind:` 字段（5 类 MECE，v1.9.0+）：
-
-| kind | 含义 | 示例 section |
-|---|---|---|
-| `model` | 数据结构 / 实体关系 | 工具 / API 发现 里描述 schema 的 |
-| `decision` | 技术选型 + 理由 | 决策记录 |
-| `guideline` | recommend / avoid | 技术模式（正反面） |
-| `pitfall` | 已知陷阱 / 故障模式 | 排障经验 |
-| `process` | 流程 / 状态机 / 步骤 | 流程改进 |
-
-注：frontmatter 的 `type: daily-insights` 标识文件类型；每个 insight 条目内的 `kind:` 标识内容形态。两者不冲突。
-
-```markdown
----
-date: YYYY-MM-DD
-type: daily-insights
-tags: [insights, ...]
----
-
-# YYYY-MM-DD 工作洞察
-
-## 技术模式
-
-### [Title]
-[Description of the pattern discovered]
-
-**模式**: ...
-**反模式**: ...
-
-- kind: guideline
-- source: Session N, [specific context]
-- confidence: high
-
-## 排障经验
-
-### [Title]
-[Root cause → fix path, especially non-intuitive ones]
-
-**诊断方法**: ...
-
-- kind: pitfall
-- source: Session N, [bug ID or description]
-- confidence: high
-
-## 工具 / API 发现
-
-### [Title]
-[New tool behavior, API boundaries, limitations]
-
-- kind: model  # 或 decision，视条目内容
-- source: Session N
-- confidence: medium
-
-## 决策记录
-
-### [Title]
-[What was decided, why, what alternatives were rejected]
-
-**决策依据**: ...
-
-- kind: decision
-- source: Session N
-- confidence: high
-
-## 流程改进
-
-### [Title]
-[Efficiency improvement or process change suggestion]
-
-**待封装**: ... (if applicable)
-
-- kind: process
-- source: Session N
-- confidence: medium
-
-## Skill 候选
-
-<!-- 仅当检测到可提炼信号时出现。medium/high 置信度的候选同时写入 insights/skill-candidates.jsonl 做跨日追踪。 -->
-<!-- low 置信度仅写入 insights 供浏览，不写入 JSONL。无信号时整个维度省略。 -->
-
-### [名称 — 简洁描述这个潜在 skill 做什么]
-
-- 信号类型: repetition | workflow | user_intent | process_improvement | cross_session
-- 来源: Session N, [具体上下文]
-- 输入 → 输出: [什么触发] → [产出什么]
-- 步骤概要: [3-5 步]
-- 置信度: high / medium / low
-- 现有覆盖: [最接近的现有 skill，或"无"]
-- 跨日状态: 首次发现 | 二次出现(观察中) | ≥3次(强推荐)
-```
-
-Only include dimensions that have real content. Empty dimensions are omitted entirely.
+**Insight tags rules**:
+- Omit `## Insights` section entirely on light days (quality gate not met).
+- Each entry: `theme` (kebab-case) + `kind` (model|decision|guideline|pitfall|process) + `confidence` (high|medium|low) + `source` + one-liner (max 2 sentences).
+- No multi-paragraph narrative — weekly review does synthesis.
 
 ## Weekly Review Template
 
@@ -220,15 +140,18 @@ tags: [weekly-review]
 
 ## 洞察聚合
 
+> 数据源：7 天 dev-log 的 `## Insights` section（inline tags）+ `skill-candidates.jsonl`。
+> 对 2026-05-05 之前的日期，兼容读取 `insights/YYYY-MM-DD.md` 独立文件。
+
 ### 本周重复出现的主题
-- [theme] — 出现 N 次，见 [dates]
+- [theme] — 出现 N/7 天，kind: [type]，[根因分析 + 可操作规则，此处做叙事合成]
 
 ### 晋升候选（多次出现 + high confidence）
 - [insight] → 建议写入 global-memory / 封装 skill
 
 ## Skill 候选聚合
 
-> 数据源：`{DEV_HORCRUX_DIR}/insights/skill-candidates.jsonl`，取本周条目（status=pending）。
+> 数据源：`{DEV_HORCRUX_DIR}/skill-candidates.jsonl`，取本周条目（status=pending）。
 
 | 候选 | 出现天数 | 累计信号 | 最高置信度 | 信号类型分布 | 建议 |
 |------|---------|---------|-----------|------------|------|

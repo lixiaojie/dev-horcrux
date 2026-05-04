@@ -3,7 +3,7 @@ name: dev-horcrux
 description: Split your session's soul before it dies — auto-generate morning plans, evening session logs with git/token metrics, and quality-gated insights. Triggers on "开工/morning/收工/wrap up/写日志", SessionStart hook [DEV-LOG BACKFILL] or [MORNING PLAN], or weekly/monthly review requests.
 license: MIT
 metadata:
-  version: "1.10.0"
+  version: "2.0.0"
   author: xiaojie
 ---
 
@@ -34,17 +34,14 @@ digraph dev_journal {
 
   session_start [label="Session starts" shape=doublecircle];
   hook_check [label="Hook detects\nmissing logs?" shape=diamond];
-  backfill [label="Backfill yesterday's\nlog + insights"];
+  backfill [label="Backfill yesterday's\nlog"];
   plan_exists [label="Today's plan\nexists?" shape=diamond];
   gen_plan [label="Generate\nmorning plan"];
   work [label="Normal work session" shape=doublecircle];
   session_end [label="User says 收工\nor session ending" shape=doublecircle];
-  gen_log [label="Generate session log\n+ metrics"];
-  insights_check [label="Substantive work\ndone today?" shape=diamond];
-  gen_insights [label="Generate insights"];
+  gen_log [label="Generate session log\n+ metrics\n+ inline insight tags"];
   skill_check [label="Skill 提炼检查\n+ JSONL 持久化"];
   drift_check [label="Doc Drift Check\n(candidates.json → proposal)"];
-  skip_insights [label="Skip insights\n(log one-liner)"];
   done [label="Update last-session.md\n+ global index" shape=doublecircle];
 
   session_start -> hook_check;
@@ -56,12 +53,8 @@ digraph dev_journal {
   gen_plan -> work;
   work -> session_end;
   session_end -> gen_log;
-  gen_log -> insights_check;
-  insights_check -> gen_insights [label="≥2 sessions\nor bugfix/decision"];
-  insights_check -> skip_insights [label="light day"];
-  gen_insights -> skill_check;
+  gen_log -> skill_check;
   skill_check -> drift_check;
-  skip_insights -> drift_check;
   drift_check -> done;
 }
 ```
@@ -125,9 +118,9 @@ for each carryover_item in previous_log.待跟进:
 
 **Proactive prompt**: If Claude has done substantive work (code changes, bugfix, design) and the user hasn't requested a log, suggest: "今天的 dev-log 还没写，要我现在生成吗？"
 
-### Two output files:
+### Output: Session Log with Inline Insight Tags
 
-**File 1 — Session Log**: `{DEV_HORCRUX_DIR}/YYYY-MM-DD.md`
+**File**: `{DEV_HORCRUX_DIR}/YYYY-MM-DD.md`
 
 **MANDATORY structure — regardless of session content (project work, exploration, fun hacking):**
 1. YAML frontmatter (`date`, `type`, `tags`) — always present
@@ -136,6 +129,7 @@ for each carryover_item in previous_log.待跟进:
 4. Per-session sections with: goal, changes, verification results
 5. **Plan review** — always diff against morning plan. If no plan exists, write `plan_review: no plan generated`
 6. 今日关键成果 + 待跟进 — always present
+7. **Insights** — inline tags at the end of the log (see Insight Tags section below)
 
 Exploratory/creative content (reverse engineering, tool hacking, etc.) goes inside the session sections freely, but the skeleton above is non-negotiable.
 
@@ -178,41 +172,33 @@ plan_review:                   # compare with morning plan
   unplanned_items: N
 ```
 
-**File 2 — Insights** (conditional): `{DEV_HORCRUX_DIR}/insights/YYYY-MM-DD.md`
+### Insight Tags (inline in dev-log)
 
-See templates.md for full format. Key quality controls:
+Insights are **not** standalone files. They are structured tags at the end of each dev-log.
 
-### Insight Quality Gate
+**When to write insight tags**: ≥2 sessions, OR bugfix, OR decision, OR new tool/API discovery, OR single session ≥10 stop events. Light days (1 short session, no decisions/surprises): omit the `## Insights` section entirely.
 
-```dot
-digraph insight_gate {
-  check [label="Should insights\nbe generated?" shape=diamond];
-  yes [label="Generate insights\nwith mandatory fields"];
-  no [label="Write one-liner:\n'Light day, no significant insights'"];
+**Format** — each tag is one entry under `## Insights`:
+```markdown
+## Insights
 
-  check -> yes [label="≥2 sessions OR\nbugfix OR decision OR\nnew tool/API discovery OR\nsingle session ≥10 stop events"];
-  check -> no [label="1 short session\n<10 stop events\nno decisions/surprises"];
-}
+- theme: <kebab-case-topic> | kind: <model|decision|guideline|pitfall|process> | confidence: <high|medium|low>
+  source: Session N, <specific context>
+  <one-liner: what happened and why it matters, max 2 sentences>
+
+- theme: <another-topic> | kind: ... | confidence: ...
+  source: ...
+  <one-liner>
 ```
 
-**Mandatory per insight:**
-- `source`: Link back to specific session (e.g., "Session 3, P0-2 fix")
-- `confidence`: high / medium / low — low-confidence insights excluded from weekly review
-- `kind`: v1.9.0+，5 类 MECE 之一（见下）
-- No empty dimensions — only write sections with real content
+**Rules**:
+- Each tag: theme + kind + confidence + source + one-liner. No multi-paragraph narrative.
+- `kind` is MECE: model (reusable pattern), decision (choice made + why), guideline (rule to follow), pitfall (trap to avoid), process (workflow improvement).
+- Low-confidence tags excluded from weekly review aggregation.
+- Weekly report does narrative synthesis — daily tags only mark signals.
+- Skill candidates go to `{DEV_HORCRUX_DIR}/skill-candidates.jsonl` (not nested under insights/).
 
-**Insight `kind` 字段（v1.9.0+，5 类 MECE）：**
-
-| kind | 含义 |
-|---|---|
-| `model` | 数据结构 / 实体关系 |
-| `decision` | 技术选型 + 理由 |
-| `guideline` | recommend / avoid 类规则 |
-| `pitfall` | 已知陷阱 / 故障模式 |
-| `process` | 流程 / 状态机 / 步骤 |
-
-frontmatter 的 `type: daily-insights` 标识文件类型；条目内 `kind:` 标识内容形态，两者独立。
-旧 insights 不回填，新写的加即可。Weekly Review 时按 kind 聚合统计。
+**Historical note**: Insights before 2026-05-05 exist as standalone files in `{DEV_HORCRUX_DIR}/insights/YYYY-MM-DD.md`. These are archived and not updated. Weekly review reads both formats during transition.
 
 ## Session Discovery (多 session 枚举)
 
@@ -250,13 +236,13 @@ frontmatter 的 `type: daily-insights` 标识文件类型；条目内 `kind:` �
 1. 回顾当日所有 session 的关键操作
 2. 对比现有 skill 列表（`ls ~/.claude/skills/*/SKILL.md`）
 3. 如果发现可提炼模式：
-   a. 写入 insights 文件的"Skill 候选"维度（见 templates.md）
-   b. medium/high 置信度的候选追加到跨日追踪文件
+   a. 在 dev-log 的 `## Insights` section 中标记相关 insight tag
+   b. medium/high 置信度的候选追加到 `{DEV_HORCRUX_DIR}/skill-candidates.jsonl`
    c. 检查是否有跨日强化信号
 
 ### JSONL 持久化（借鉴 Discovery Pipeline 信号机制）
 
-**文件**：`{DEV_HORCRUX_DIR}/insights/skill-candidates.jsonl`（单文件追加，非按日分文件）
+**文件**：`{DEV_HORCRUX_DIR}/skill-candidates.jsonl`（单文件追加，非按日分文件）
 
 **记录格式**：
 ```json
@@ -520,7 +506,7 @@ Dimensions:
 
 ### Skill 候选聚合
 
-扫描 `{DEV_HORCRUX_DIR}/insights/skill-candidates.jsonl`，筛选本周（status=pending）条目，按 identifier 分组：
+扫描 `{DEV_HORCRUX_DIR}/skill-candidates.jsonl`，筛选本周（status=pending）条目，按 identifier 分组：
 
 | 判定 | 条件 | 动作 |
 |------|------|------|
@@ -618,7 +604,9 @@ After generating session log, check if any plan was in-progress. If yes, update 
 
 | Mistake | Fix |
 |---|---|
-| Generating verbose insights on light days | Check insight quality gate first |
+| Writing multi-paragraph insight narratives in dev-log | Insight tags are one-liners. Weekly report does narrative synthesis |
+| Creating standalone insight files in `insights/` | Insights are inline in dev-log since 2026-05-05. No new files in `insights/` |
+| Writing insight tags on light days | Omit `## Insights` section entirely if quality gate not met |
 | Hardcoding paths | Always read from `~/.claude/dev-horcrux.conf` |
 | Forgetting plan review in evening log | Always diff plan vs actual, even if plan was empty |
 | Writing insights without source links | Every insight MUST link to a specific session |
