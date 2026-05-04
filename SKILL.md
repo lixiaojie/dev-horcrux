@@ -3,7 +3,7 @@ name: dev-horcrux
 description: Split your session's soul before it dies — auto-generate morning plans, evening session logs with git/token metrics, and quality-gated insights. Triggers on "开工/morning/收工/wrap up/写日志", SessionStart hook [DEV-LOG BACKFILL] or [MORNING PLAN], or weekly/monthly review requests.
 license: MIT
 metadata:
-  version: "1.9.0"
+  version: "1.10.0"
   author: xiaojie
 ---
 
@@ -499,9 +499,11 @@ rules:
 
 **检测逻辑**：读 `dev-horcrux.conf` 中的 `CONFIG_HEALTH_ONBOARDED`。未设置且首次发现 ALERT → 触发引导流程。
 
-## Weekly Review (manual trigger)
+## Weekly Review (auto on Sunday + manual on demand)
 
-When user asks for weekly review, or on Friday/weekend:
+**Auto (v1.10.0+)**: `[DEV-HORCRUX WEEKLY CRON]` fires every Sunday 20:03 (self-renewing, see `references/scheduling.md`). Skips if the week's file already exists.
+
+**Manual**: triggered when user asks for weekly review, or on Friday/weekend:
 
 **Input**: That week's daily logs + insights
 **Output**: `{DEV_HORCRUX_DIR}/weekly/YYYY-WNN.md`

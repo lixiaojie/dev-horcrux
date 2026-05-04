@@ -11,7 +11,7 @@
 在任意 Claude Code session 中执行一次：
 
 ```
-帮我设置 dev-horcrux 持久调度：创建两个 durable cron（晨间计划 09:05 + 晚间日志 19:05），带自续期。
+帮我设置 dev-horcrux 持久调度：创建三个 durable cron（晨间计划 09:05 + 晚间日志 19:05 + 周报 Sun 20:03），带自续期。
 ```
 
 或手动创建：
@@ -42,6 +42,26 @@ CronCreate:
     After completing, self-renew: CronList → find cron with schedule "5 19 * * *" →
     CronDelete → CronCreate with same config and this same prompt. This resets the 7-day expiry.
 ```
+
+**Weekly Review Cron (v1.10.0+):**
+```
+CronCreate:
+  cron: "3 20 * * 0"          # 每周日 20:03
+  recurring: true
+  durable: true
+  prompt: |
+    [DEV-HORCRUX WEEKLY CRON]
+    Use the dev-horcrux skill to generate this week's weekly review.
+    Read dev-logs + insights for past 7 days (Mon–Sun), aggregate per templates.md.
+    Output: {DEV_HORCRUX_DIR}/weekly/YYYY-WNN.md (skip if exists).
+    After completing, self-renew: CronList → find cron with schedule "3 20 * * 0" →
+    CronDelete → CronCreate with same config and this same prompt.
+```
+
+Weekly 放 Sunday 20:03 的原因：
+- 周收尾自然节点
+- 避开 Discovery Pipeline 的 Sunday 21:03 cron
+- 20:03 的 :03 符合 off-peak minute 约定（不挤 :00 / :30）
 
 ## Self-renewal mechanism
 
