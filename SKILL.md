@@ -3,7 +3,7 @@ name: dev-horcrux
 description: Split your session's soul before it dies — auto-generate morning plans, evening session logs with git/token metrics, and quality-gated insights. Triggers on "开工/morning/收工/wrap up/写日志", SessionStart hook [DEV-LOG BACKFILL] or [MORNING PLAN], or weekly/monthly review requests.
 license: MIT
 metadata:
-  version: "2.0.0"
+  version: "2.1.0"
   author: xiaojie
 ---
 
@@ -87,12 +87,14 @@ digraph dev_journal {
 ```
 for each carryover_item in previous_log.待跟进:
     keywords = extract_keywords(carryover_item)  # 如 "anticrawl insight" / "新闻联播 spec"
-    evidence = search(keywords) in:
+    verification_goal = identify_goal(carryover_item)  # 是什么意义上的完成？
+    evidence = search(keywords) across ALL of:
       - {DEV_HORCRUX_DIR}/insights/*.md     # insight 归档
       - ~/.claude/.../memory/*.md           # memory 条目
       - docs/specs/*.md / docs/plans/*.md   # 设计/计划文档
-      - git log since carryover_date         # 代码实现
-    if evidence found:
+      - git log since carryover_date across MULTIPLE repos (see 跨仓 rule below)
+      - decisions/*.md                      # 决策 doc
+    if evidence found (meeting verification_goal):
       mark "✅ 已完成（证据: <path:line>），本 plan 不再携带"
       add correction note to previous log's 待跟进 section (strike-through + stale 修正批注)
     else:
@@ -104,11 +106,43 @@ for each carryover_item in previous_log.待跟进:
 - 不依赖关键词完美匹配——宁可过度核查（grep 多个同义词）也不要漏掉
 - 如果不确定是否已做，降级为"待用户确认"而不是盲目携带
 
+### 跨仓证据规则（v1.11.0+ — 避免单仓 proxy 陷阱）
+
+**Problem (真实案例 2026-05-06)**：carryover 写的是 "SAK v0.4.5 live 验收"。morning plan 生成时只 grep `stock-analysis-kit` 仓库的 commit，发现 0 commit → 判为"跳票第 5 天"。**实际上 live 验收是通过下游 dashboard + api-server + news-data-kit 三仓 12 commit 真实跑通 Phase 2 pipeline、发现并修多个 empty case / cache / SSE bug 完成的**——比 verify_*.py 脚本级验证更严。用错 proxy = plan 连续 3 天写"P0 跳票"焦虑，误导优先级判断。
+
+**Rule**: 对"X 验收 / X 验证"类 carryover，证据搜索必须跨多仓，并按**验证目标**而不是"源仓库有无 commit"来判断：
+
+| carryover 类型 | proxy 陷阱 | 正确证据 |
+|---|---|---|
+| "X 库 live 验收" | 只看 X 库 commit | X 的**消费方**有没有在真实用：UI 渲染 X 的新字段 / API endpoint 开 X 的新开关 / 下游 kit 因 X 的输出调整 |
+| "X 跑通测试" | 只看 X/tests/ 新增 | X 的消费方有没有因 X bug 触发 fix commit（= 被动 stress test） |
+| "验证 bug 修复" | 只看单 commit revert | 消费方是否在 X 修复后有 follow-up（= 确认 bug 真的消失） |
+| "生产 deploy" | 只看 deploy 脚本 | CI/CD log / deploy timestamp / 线上 endpoint 版本号 |
+
+**跨仓搜索的具体动作**：
+
+```bash
+# 对每个 carryover 里的 "X 验收" 类条目
+# 1. 识别 X 的下游 repos（从 manifest.yaml consumers / project index）
+# 2. 对每个 consumer 跑
+for consumer in X_consumers:
+  git -C $consumer log --since=carryover_date --grep="X|related_keywords"
+# 3. 任何一个下游 repo 有 "在用 X 的新字段 / 修 X 导致的 bug" 类 commit → 证据达标
+```
+
+**判断 heuristic**（证据强度排序）：
+1. **强证据**：消费方因 X 的新输出修改 schema / 添加渲染 / 触发 bug fix → 这是 stress test
+2. **中证据**：X 自己的 tests/ 新增 + 相关 CI 通过 → 脚本级验证
+3. **弱证据**：X 的 README / CHANGELOG 提到 "verified" → 声明级，最不可信
+
+**宁强勿弱**：找到强证据直接判 ✅；只有中/弱证据时保留 carryover 但降级为 `[待澄清]`。
+
 **Edge cases**:
 - 欠账条目太模糊（如"flow 优化"）→ 无法反查，直接带入但加 `[待澄清]` 标签
 - 部分完成（如 spec 起草了但未实施）→ 拆成两条，"spec ✅"和"实施 [ ]"
+- 跨仓工作流下的"分布式完成"（案例：SAK + dashboard + NDK）→ 在回写批注里**列出所有贡献仓库**，方便后续复盘
 
-**Why this matters**: 无核查的欠账继承机制 = 欠账通胀。用户看到的"连续 N 天未做"可能是系统 bug 而非执行问题，会误导优先级判断。
+**Why this matters**: 无核查的欠账继承机制 = 欠账通胀；单仓 proxy 指标 = 验证目标偏移。两者都会误导用户把本来已完成的事当成"连续跳票"，进而产生虚假的纪律焦虑（过去 3 天写"硬门控破防"就是这个错误的下游结果）。
 
 **Output**: `{DEV_HORCRUX_DIR}/YYYY-MM-DD-plan.md` — see templates.md for format.
 
@@ -616,9 +650,18 @@ After generating session log, check if any plan was in-progress. If yes, update 
 | Using flat Sonnet rate for all models | v1.8.0+: per-model pricing applied; Opus costs 5x more than Sonnet |
 | 凭记忆判断文档是否漂移 | v1.9.0+: 必须跑 `doc-drift.py`，不自评 |
 | 盲目继承上一个 log 的待跟进 | v1.10.0+: 每条 carryover 先反向搜 insights/memory/git log，找到证据就不再携带 |
+| 用"源仓库有无 commit"当验收 proxy | v1.11.0+: 跨仓搜消费方证据 — UI 消费新字段 / 下游因 X 修 bug 都是强证据，比 X 仓库 commit 更严 |
 
 
 ## Changelog
+
+### 2.1.0 — 2026-05-07 (rebased v1.11.0 onto v2.0.0)
+- Add: **跨仓证据规则** to Carryover Staleness Check — "X 验收"类 carryover 不能只看源仓库 commit，必须跨多仓搜消费方证据。
+- Fix: 真实案例 — "SAK v0.4.5 live 验收" 从 5/4 到 5/6 被 plan 连续 3 天误判为"跳票"。实际 5/6 已通过 dashboard + api-server + NDK 三仓 12 commit 完成生产消费级验证。单仓 commit proxy = 验证目标偏移。
+- Add: 证据强度分级（强/中/弱）+ heuristic：消费方修 bug / 渲染新字段 > 脚本测试 > README 声明。
+- Add: Common Mistakes 新增一条"用源仓库有无 commit 当验收 proxy"。
+- Decision: 保留"当确认证据不足时降级 `[待澄清]`"的原则 — 不盲目判已做。
+- Lesson: 连续 3 天错误判断产生虚假的"硬门控破防"焦虑，下游产生错误的 plan 优先级建议。proxy 指标错 → 行为决策错。
 
 ### 1.10.0 — 2026-05-03
 - Add: **Carryover Staleness Check**——生成 morning plan 时，对每条从上一个 log 继承的待跟进条目做反向证据搜索（insights / memory / docs / git log），找到证据就不再携带并回写修正批注。
