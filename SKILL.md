@@ -655,7 +655,7 @@ After generating session log, check if any plan was in-progress. If yes, update 
 
 ## Changelog
 
-### 2.1.0 — 2026-05-07 (rebased v1.11.0 onto v2.0.0)
+### 2.1.0 — 2026-05-07
 - Add: **跨仓证据规则** to Carryover Staleness Check — "X 验收"类 carryover 不能只看源仓库 commit，必须跨多仓搜消费方证据。
 - Fix: 真实案例 — "SAK v0.4.5 live 验收" 从 5/4 到 5/6 被 plan 连续 3 天误判为"跳票"。实际 5/6 已通过 dashboard + api-server + NDK 三仓 12 commit 完成生产消费级验证。单仓 commit proxy = 验证目标偏移。
 - Add: 证据强度分级（强/中/弱）+ heuristic：消费方修 bug / 渲染新字段 > 脚本测试 > README 声明。
